@@ -1,0 +1,6 @@
+{
+  "name": "Excel to Data Analyst Academy",
+  "description": "Start from Zero. Learn Excel. Become a Data Analyst. A structured six-level online learning platform for mastering practical Microsoft Excel data analysis, reporting, and dashboards.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
