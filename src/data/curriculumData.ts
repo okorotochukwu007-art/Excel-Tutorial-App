@@ -1,4 +1,15 @@
 import { Course, CurriculumLevel, ProjectBrief, QuizQuestion } from '../types/academy';
+import youtubeRecommendationsCache from './youtubeRecommendationsCache.json';
+
+function getDefaultLessonVideoId(lessonId: string): string | undefined {
+  const entry = (youtubeRecommendationsCache as Record<string, any>)[lessonId];
+  if (!entry || !Array.isArray(entry.recommendations)) return undefined;
+  const primary =
+    entry.recommendations.find((r: any) => r.status === 'approved' && r.isPrimary) ||
+    entry.recommendations.find((r: any) => r.status === 'approved') ||
+    entry.recommendations[0];
+  return primary?.videoId || undefined;
+}
 
 export const INITIAL_COURSE: Course = {
   id: 'course-excel-data-analyst-mastery',
@@ -621,7 +632,7 @@ function buildLevelModules(
           description: `Learn the exact workflow for ${modTitle.toLowerCase()} in Microsoft Excel. We walk through real business examples, keyboard shortcuts, and common beginner mistakes to avoid.`,
           durationMinutes: 14 + ((levelNumber + modOrder) % 9),
           isFreePreview: isFree,
-          youtubeVideoId: undefined,
+          youtubeVideoId: getDefaultLessonVideoId(lesson1Id),
           keyFormulas: defaultFormulas,
           conceptSummary: [
             `Understand why ${modTitle.toLowerCase()} matters in day-to-day business reporting.`,
@@ -654,7 +665,7 @@ function buildLevelModules(
           description: `Apply ${modTitle.toLowerCase()} to a realistic business scenario. Practice building, checking, and formatting your solution from scratch.`,
           durationMinutes: 18 + ((levelNumber * 2 + modOrder) % 8),
           isFreePreview: levelNumber === 1 && modOrder === 1,
-          youtubeVideoId: undefined,
+          youtubeVideoId: getDefaultLessonVideoId(lesson2Id),
           keyFormulas: defaultFormulas,
           conceptSummary: [
             'Translate a business request into structured rows, columns, and formulas.',

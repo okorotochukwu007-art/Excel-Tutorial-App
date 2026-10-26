@@ -45,7 +45,7 @@ export default defineConfig(() => {
           ],
         },
         workbox: {
-          maximumFileSizeToCacheInBytes: 5 * 1024 * 1024, // 5 MB limit to precache high-res assets
+          maximumFileSizeToCacheInBytes: 8 * 1024 * 1024, // 8 MB limit to precache high-res assets and 108-lesson video cache
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
           runtimeCaching: [
             {
