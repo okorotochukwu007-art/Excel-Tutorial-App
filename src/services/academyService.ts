@@ -19,7 +19,7 @@ import {
   YoutubeVideoRecommendation,
 } from '../types/academy';
 
-const LOCAL_VIDEO_RECS_OVERRIDE_KEY = 'excel_academy_video_recs_override_v1';
+const LOCAL_VIDEO_RECS_OVERRIDE_KEY = 'excel_academy_video_recs_override_v2';
 
 function loadLocalVideoOverridesMap(): Record<string, LessonVideoRecommendationsRecord> {
   if (typeof window === 'undefined') return {};

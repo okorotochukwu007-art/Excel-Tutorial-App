@@ -1618,7 +1618,7 @@ export async function loadLessonRecommendations(
       }
     }
 
-    // 2. Check assignments table row 'yt-rec-cache:<lessonId>' (works immediately on existing Stage 2 schema)
+    // 2. Check assignments table row 'yt-rec-cache:<lessonId>' (only override localStore if manual_url is present or localStore is missing)
     const { data: assignRow, error: assignErr } = await supabase
       .from('assignments')
       .select('instructions, expected_outcome, created_at')
@@ -1631,7 +1631,12 @@ export async function loadLessonRecommendations(
           assignRow.instructions
         );
         if (parsed && Array.isArray(parsed.recommendations)) {
-          return parsed;
+          const hasManual = parsed.recommendations.some(
+            (r) => r.source === 'manual_url'
+          );
+          if (hasManual || !localStore[lessonId]) {
+            return parsed;
+          }
         }
       } catch {
         // ignore parse error
@@ -1816,7 +1821,12 @@ export async function loadAllLessonRecommendationsMap(
             row.instructions
           );
           if (parsed && parsed.lessonId && Array.isArray(parsed.recommendations)) {
-            recordsByLessonId[parsed.lessonId] = parsed;
+            const hasManual = parsed.recommendations.some(
+              (r) => r.source === 'manual_url'
+            );
+            if (hasManual || !localStore[parsed.lessonId]) {
+              recordsByLessonId[parsed.lessonId] = parsed;
+            }
           }
         } catch {
           // ignore malformed JSON
