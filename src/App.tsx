@@ -3,25 +3,30 @@ import {
   Course,
   CurriculumLevel,
   Lesson,
+  LevelCertificate,
   Profile,
   ProjectSubmissionState,
   QuizAttempt,
   QuizQuestion,
 } from './types/academy';
 import { CURRICULUM_LEVELS, INITIAL_COURSE } from './data/curriculumData';
+import { LEVEL_EXAMS } from './data/levelExamData';
+import { CAPSTONE_PROJECTS } from './data/capstoneProjectsData';
 import { AppView, Navbar } from './components/Navbar';
 import { HomeView } from './components/HomeView';
 import { CurriculumView } from './components/CurriculumView';
 import { StudentDashboardView } from './components/StudentDashboardView';
+import { CapstonePortfolioView } from './components/CapstonePortfolioView';
 import { LessonPlayerView } from './components/LessonPlayerView';
 import { AdminDashboardView } from './components/AdminDashboardView';
-import { AdminAccessGate } from './components/AdminAccessGate';
-import { FormulaPlaygroundView } from './components/FormulaPlaygroundView';
 import { ShortcutCoachView } from './components/ShortcutCoachView';
 import {
   AuthAndCheckoutModal,
+  AuthModalTab,
   LegalAndContactModal,
 } from './components/AuthAndCheckoutModal';
+import { LevelExamModal } from './components/LevelExamModal';
+import { CertificatePreviewModal } from './components/CertificatePreviewModal';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { supabase } from './lib/supabaseClient';
 import {
@@ -84,24 +89,19 @@ export default function App() {
 
   const [projectSubmissions, setProjectSubmissions] = useState<
     Record<string, ProjectSubmissionState>
-  >({
-    'proj-1-sales-performance': {
-      projectId: 'proj-1-sales-performance',
-      completedChecklistItems: [0, 1],
-      notes: '',
-      status: 'in_progress',
-    },
-  });
+  >({});
 
   // Modals state
   const [authModalOpen, setAuthModalOpen] = useState(false);
-  const [authModalTab, setAuthModalTab] = useState<'login' | 'register' | 'instructor' | 'checkout'>('login');
+  const [authModalTab, setAuthModalTab] = useState<AuthModalTab>('login');
   const [pendingLessonId, setPendingLessonId] = useState<string | null>(null);
   const [authPromptNotice, setAuthPromptNotice] = useState<string | null>(null);
   const [legalDocType, setLegalDocType] = useState<
     'privacy' | 'terms' | 'refund' | 'contact' | null
   >(null);
-  const [playgroundFormula, setPlaygroundFormula] = useState<string>('=SUM(E2:E11)');
+  const [activeExamLevel, setActiveExamLevel] = useState<number | null>(null);
+  const [previewCertificate, setPreviewCertificate] = useState<LevelCertificate | null>(null);
+  const [lockNoticeBanner, setLockNoticeBanner] = useState<string | null>(null);
 
   const [hasPaid, setHasPaid] = useState<boolean>(() => {
     return localStorage.getItem('excel_academy_has_paid') === 'true';
@@ -113,7 +113,7 @@ export default function App() {
 
   const checkLessonAccess = (lessonId: string): {
     unlocked: boolean;
-    reason?: 'level_locked' | 'sequence_locked';
+    reason?: 'level_locked' | 'level_quiz_required' | 'sequence_locked';
     requiredLessonTitle?: string;
     requiredLevelNumber?: number;
   } => {
@@ -145,7 +145,22 @@ export default function App() {
       };
     }
 
-    // Finish each exercise before starting the next
+    // Must pass the previous Level's End-of-Level General Quiz before unlocking the next Level
+    if (targetLesson.levelNumber > 1) {
+      const prevLevelNum = targetLesson.levelNumber - 1;
+      const hasPassedPrevLevelQuiz = quizAttempts.some(
+        (att) => att.quizId === `exam-lvl-${prevLevelNum}` && att.passed
+      );
+      if (!hasPassedPrevLevelQuiz) {
+        return {
+          unlocked: false,
+          reason: 'level_quiz_required',
+          requiredLevelNumber: prevLevelNum,
+        };
+      }
+    }
+
+    // Finish each lesson quiz before starting the next lesson
     if (targetIdx > 0) {
       const prevLesson = allOrderedLessons[targetIdx - 1];
       const isPrevCompleted = completedLessonIds.includes(prevLesson.id);
@@ -219,8 +234,12 @@ export default function App() {
     let subscription: { unsubscribe: () => void } | null = null;
     try {
       const { data: listener } = supabase.auth.onAuthStateChange(
-        async (_event, session) => {
+        async (event, session) => {
           try {
+            if (event === 'PASSWORD_RECOVERY') {
+              setAuthModalTab('reset_password');
+              setAuthModalOpen(true);
+            }
             if (session?.user) {
               const u = session.user;
               const profile = await fetchOrCreateUserProfile(
@@ -254,7 +273,12 @@ export default function App() {
   }, []);
 
   const handleNavigate = (view: AppView, sectionId?: string) => {
-    if (!isAuthenticated && (view === 'lesson' || view === 'dashboard' || view === 'admin')) {
+    if (view === 'admin' && !isInstructor) {
+      setCurrentView(isAuthenticated ? 'dashboard' : 'home');
+      return;
+    }
+
+    if (!isAuthenticated && (view === 'lesson' || view === 'dashboard')) {
       setAuthPromptNotice(
         'Please log in or create a free student account to access lessons and your learning dashboard.'
       );
@@ -282,6 +306,75 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  const handleOpenLevelExam = (levelNumber: number) => {
+    if (!isAuthenticated) {
+      setAuthPromptNotice(
+        'Please log in or create a free student account to take Level Final Exams.'
+      );
+      setAuthModalTab('login');
+      setAuthModalOpen(true);
+      return;
+    }
+
+    if (levelNumber > 1 && !isPurchased && !isInstructor) {
+      setAuthPromptNotice(
+        `Level ${levelNumber} Final Exam requires Full Academy enrolment. Enrol to unlock Levels 2–6 and all certification exams.`
+      );
+      setAuthModalTab('checkout');
+      setAuthModalOpen(true);
+      return;
+    }
+
+    if (!isInstructor) {
+      // 1. Check that all previous levels (1 .. levelNumber - 1) have both all modules completed and their exams passed
+      for (let prev = 1; prev < levelNumber; prev++) {
+        const prevLvl = levels.find((l) => l.levelNumber === prev);
+        if (prevLvl) {
+          const prevLessons = prevLvl.modules.flatMap((m) => m.lessons);
+          const prevDoneCount = prevLessons.filter((l) =>
+            completedLessonIds.includes(l.id)
+          ).length;
+          if (prevDoneCount < prevLessons.length) {
+            setLockNoticeBanner(
+              `Level ${levelNumber} Final Exam is locked: Please complete all modules in Level ${prev} (${prevDoneCount}/${prevLessons.length} completed) first.`
+            );
+            return;
+          }
+        }
+        const passedPrevExam = quizAttempts.some(
+          (att) => att.quizId === `exam-lvl-${prev}` && att.passed
+        );
+        if (!passedPrevExam) {
+          setLockNoticeBanner(
+            `Level ${levelNumber} Final Exam is locked: You must pass the Level ${prev} Final Exam first before taking Level ${levelNumber}.`
+          );
+          return;
+        }
+      }
+
+      // 2. Check that all modules/lessons in THIS level are completed before taking this level's exam
+      const targetLvl = levels.find((l) => l.levelNumber === levelNumber);
+      if (targetLvl) {
+        const lvlLessons = targetLvl.modules.flatMap((m) => m.lessons);
+        const doneCount = lvlLessons.filter((l) =>
+          completedLessonIds.includes(l.id)
+        ).length;
+        const alreadyPassedThisExam = quizAttempts.some(
+          (att) => att.quizId === `exam-lvl-${levelNumber}` && att.passed
+        );
+        if (doneCount < lvlLessons.length && !alreadyPassedThisExam) {
+          setLockNoticeBanner(
+            `Level ${levelNumber} Final Exam is locked: Please complete all ${lvlLessons.length} module lessons in Level ${levelNumber} (${doneCount}/${lvlLessons.length} completed) before taking the Level ${levelNumber} Final Exam.`
+          );
+          return;
+        }
+      }
+    }
+
+    setLockNoticeBanner(null);
+    setActiveExamLevel(levelNumber);
+  };
+
   const handleStartLesson = (lessonId: string) => {
     if (!isAuthenticated) {
       setPendingLessonId(lessonId);
@@ -303,13 +396,20 @@ export default function App() {
         setAuthModalOpen(true);
         return;
       } else if (access.reason === 'sequence_locked') {
-        alert(
-          `Exercise Locked: Please finish the previous exercise ("${access.requiredLessonTitle}") before starting this one!`
+        setLockNoticeBanner(
+          `Lesson Locked: Please complete the previous lesson quiz ("${access.requiredLessonTitle}") before starting this lesson.`
         );
+        return;
+      } else if (access.reason === 'level_quiz_required' && access.requiredLevelNumber) {
+        setLockNoticeBanner(
+          `To unlock Level ${access.requiredLevelNumber + 1}, please complete all modules in Level ${access.requiredLevelNumber} and pass the Level ${access.requiredLevelNumber} Final Exam (70%+ required).`
+        );
+        handleOpenLevelExam(access.requiredLevelNumber);
         return;
       }
     }
 
+    setLockNoticeBanner(null);
     setActiveLessonId(lessonId);
     setRecentlyViewedLessonId(lessonId);
     setCurrentView('lesson');
@@ -523,6 +623,30 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  const activeExamObj =
+    activeExamLevel !== null
+      ? LEVEL_EXAMS.find((e) => e.levelNumber === activeExamLevel) || null
+      : null;
+
+  const totalCurriculumLessons = levels.reduce(
+    (acc, lvl) =>
+      acc + lvl.modules.reduce((mAcc, mod) => mAcc + mod.lessons.length, 0),
+    0
+  );
+  const allModulesDone =
+    totalCurriculumLessons > 0 &&
+    completedLessonIds.length >= totalCurriculumLessons;
+  const allExamsDone = levels.every((lvl) =>
+    quizAttempts.some(
+      (att) => att.quizId === `exam-lvl-${lvl.levelNumber}` && att.passed
+    )
+  );
+  const allProjectsDone = CAPSTONE_PROJECTS.every(
+    (proj) => projectSubmissions[proj.id]?.status === 'completed_local'
+  );
+  const canExportCertificate =
+    allModulesDone && allExamsDone && allProjectsDone;
+
   return (
     <div className="min-h-screen flex flex-col bg-[#FAF9F5] text-slate-900">
       <Navbar
@@ -534,10 +658,23 @@ export default function App() {
         onLogout={handleLogout}
       />
 
+      {lockNoticeBanner && (
+        <div className="bg-amber-950 text-amber-100 border-b border-amber-800 px-6 py-3 flex items-center justify-between gap-4 text-xs">
+          <span>{lockNoticeBanner}</span>
+          <button
+            type="button"
+            onClick={() => setLockNoticeBanner(null)}
+            className="px-2.5 py-1 rounded bg-amber-800 hover:bg-amber-700 text-white font-semibold shrink-0 cursor-pointer"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {(currentView === 'home' ||
         (!isAuthenticated &&
           currentView !== 'curriculum' &&
-          currentView !== 'playground' &&
+          currentView !== 'projects' &&
           currentView !== 'shortcuts' &&
           currentView !== 'admin')) && (
         <HomeView
@@ -558,10 +695,12 @@ export default function App() {
           selectedLevelFilter={selectedLevelFilter}
           onChangeLevelFilter={setSelectedLevelFilter}
           completedLessonIds={completedLessonIds}
+          quizAttempts={quizAttempts}
           isAuthenticated={isAuthenticated}
           isPurchased={isPurchased}
           isInstructor={isInstructor}
           onStartLesson={handleStartLesson}
+          onOpenLevelExam={handleOpenLevelExam}
           onRequireAuth={() => {
             setAuthPromptNotice(
               'Please log in or sign up to start taking lessons and download Excel practice workbooks.'
@@ -570,6 +709,62 @@ export default function App() {
             setAuthModalOpen(true);
           }}
           onOpenCheckout={() => handleOpenAuthModal('checkout')}
+        />
+      )}
+
+      {currentView === 'projects' && (
+        <CapstonePortfolioView
+          standalonePage={true}
+          studentName={currentUser.fullName}
+          studentEmail={currentUser.email}
+          projectSubmissions={projectSubmissions}
+          levels={levels}
+          completedLessonIds={completedLessonIds}
+          quizAttempts={quizAttempts}
+          isInstructor={isInstructor}
+          isAuthenticated={isAuthenticated}
+          onUpdateStudentName={async (newName) => {
+            setCurrentUser((prev) => ({ ...prev, fullName: newName }));
+            if (!currentUser.isDemoSession) {
+              await updateProfileFullNameInSupabase(currentUser.id, newName);
+            }
+          }}
+          onNavigateToLearning={() => {
+            if (isAuthenticated) {
+              setCurrentView('dashboard');
+            } else {
+              setCurrentView('curriculum');
+            }
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          }}
+          onRequireAuth={() => {
+            setAuthPromptNotice(
+              'Please log in or sign up to submit your final projects and download your official certificate.'
+            );
+            setAuthModalTab('login');
+            setAuthModalOpen(true);
+          }}
+          onSubmitCapstoneProject={(projectId, _score, notes) => {
+            setProjectSubmissions((prev) => {
+              const updated = {
+                ...prev,
+                [projectId]: {
+                  projectId,
+                  completedChecklistItems: [0, 1, 2, 3],
+                  notes,
+                  status: 'completed_local' as const,
+                  updatedAt: new Date().toISOString(),
+                },
+              };
+              if (!currentUser.isDemoSession) {
+                syncProjectSubmissionToSupabase(
+                  currentUser.id,
+                  updated[projectId]
+                );
+              }
+              return updated;
+            });
+          }}
         />
       )}
 
@@ -597,13 +792,18 @@ export default function App() {
           }}
           onRecordQuizAttempt={handleRecordQuizAttempt}
           onLogoutDemo={handleLogout}
-          onSubmitCapstoneProject={(projectId, score, notes) => {
+          onOpenLevelExam={handleOpenLevelExam}
+          onNavigateToProjects={() => {
+            setCurrentView('projects');
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          }}
+          onSubmitCapstoneProject={(projectId, _score, notes) => {
             setProjectSubmissions((prev) => {
               const updated = {
                 ...prev,
                 [projectId]: {
                   projectId,
-                  completedChecklistItems: [0, 1, 2, 3, 4, 5],
+                  completedChecklistItems: [0, 1, 2, 3],
                   notes,
                   status: 'completed_local' as const,
                   updatedAt: new Date().toISOString(),
@@ -632,23 +832,7 @@ export default function App() {
           onToggleCompleteLesson={handleToggleCompleteLesson}
           onRecordQuizAttempt={handleRecordQuizAttempt}
           quizAttempts={quizAttempts}
-          onOpenInPlayground={(formula) => {
-            setPlaygroundFormula(formula);
-            setCurrentView('playground');
-          }}
-        />
-      )}
-
-      {currentView === 'playground' && (
-        <FormulaPlaygroundView
-          initialFormula={playgroundFormula}
-          onNavigateToLessons={() => {
-            if (isAuthenticated) {
-              setCurrentView('lesson');
-            } else {
-              setCurrentView('curriculum');
-            }
-          }}
+          onOpenLevelExam={handleOpenLevelExam}
         />
       )}
 
@@ -664,42 +848,77 @@ export default function App() {
         />
       )}
 
-      {currentView === 'admin' && (
-        currentUser?.email?.toLowerCase() === 'okorotochukwu007@gmail.com' ? (
-          <AdminDashboardView
-            course={course}
-            levels={levels}
-            completedLessonIds={completedLessonIds}
-            supabaseStatus={supabaseStatus}
-            currentUser={currentUser}
-            onUpdateCourse={setCourse}
-            onSaveLessonInModule={handleSaveLessonInModule}
-            onDeleteLessonFromModule={handleDeleteLessonFromModule}
-            onReorderLessonInModule={handleReorderLessonInModule}
-            onAddQuizQuestionToLesson={handleAddQuizQuestionToLesson}
-            onSignOutAdmin={() => {
-              handleLogout();
-              setCurrentView('home');
-            }}
-          />
-        ) : (
-          <AdminAccessGate
-            currentUser={currentUser}
-            onAuthorizeAsInstructor={() => {
-              setCurrentUser({
-                id: 'instructor-okoro-tochuwku',
-                email: 'okorotochukwu007@gmail.com',
-                fullName: 'Okoro Tochuwku (Lead Instructor)',
-                role: 'admin_demo',
-                createdAt: '2026-10-23',
-                isDemoSession: false,
-              });
-              localStorage.setItem('instructor_master_key', 'OKORO-EXCEL-CHIEF-2026');
-              setCurrentView('admin');
-            }}
-            onReturnHome={() => setCurrentView('home')}
-          />
-        )
+      {currentView === 'admin' && isInstructor && (
+        <AdminDashboardView
+          course={course}
+          levels={levels}
+          completedLessonIds={completedLessonIds}
+          supabaseStatus={supabaseStatus}
+          currentUser={currentUser}
+          onUpdateCourse={setCourse}
+          onSaveLessonInModule={handleSaveLessonInModule}
+          onDeleteLessonFromModule={handleDeleteLessonFromModule}
+          onReorderLessonInModule={handleReorderLessonInModule}
+          onAddQuizQuestionToLesson={handleAddQuizQuestionToLesson}
+          onSignOutAdmin={() => {
+            handleLogout();
+            setCurrentView('home');
+          }}
+        />
+      )}
+
+      {activeExamObj && (
+        <LevelExamModal
+          exam={activeExamObj}
+          studentName={currentUser.fullName}
+          studentEmail={currentUser.email}
+          isOpen={Boolean(activeExamObj)}
+          canExportCertificate={canExportCertificate}
+          onClose={() => setActiveExamLevel(null)}
+          onRecordExamAttempt={handleRecordQuizAttempt}
+          onOpenCertificatePreview={(cert) => setPreviewCertificate(cert)}
+          onAdvanceToNextLevel={(nextLvlNum) => {
+            setActiveExamLevel(null);
+            setLockNoticeBanner(null);
+            if (nextLvlNum > 1 && !isPurchased) {
+              setAuthPromptNotice(
+                `Congratulations on passing the Level ${nextLvlNum - 1} General Quiz! Enrol in the Full Academy to unlock Level ${nextLvlNum}.`
+              );
+              setAuthModalTab('checkout');
+              setAuthModalOpen(true);
+              return;
+            }
+            const nextLevelObj = levels.find((l) => l.levelNumber === nextLvlNum);
+            const firstLessonInNextLevel = nextLevelObj?.modules[0]?.lessons[0];
+            if (firstLessonInNextLevel) {
+              setActiveLessonId(firstLessonInNextLevel.id);
+              setRecentlyViewedLessonId(firstLessonInNextLevel.id);
+              setCurrentView('lesson');
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            } else {
+              setSelectedLevelFilter(nextLvlNum);
+              setCurrentView('curriculum');
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }
+          }}
+        />
+      )}
+
+      {previewCertificate && (
+        <CertificatePreviewModal
+          certificate={previewCertificate}
+          isOpen={Boolean(previewCertificate)}
+          onClose={() => setPreviewCertificate(null)}
+          onUpdateName={async (newName) => {
+            setCurrentUser((prev) => ({ ...prev, fullName: newName }));
+            setPreviewCertificate((prev) =>
+              prev ? { ...prev, studentName: newName } : null
+            );
+            if (!currentUser.isDemoSession) {
+              await updateProfileFullNameInSupabase(currentUser.id, newName);
+            }
+          }}
+        />
       )}
 
       <AuthAndCheckoutModal
@@ -725,11 +944,16 @@ export default function App() {
             setQuizAttempts(dbProgress.quizAttempts);
             setProjectSubmissions(dbProgress.projectSubmissions);
           }
+          const isAdminLogin =
+            profile.email?.toLowerCase() === 'okorotochukwu007@gmail.com' ||
+            profile.role === 'admin';
           if (pendingLessonId) {
             setActiveLessonId(pendingLessonId);
             setRecentlyViewedLessonId(pendingLessonId);
             setPendingLessonId(null);
             setCurrentView('lesson');
+          } else if (isAdminLogin) {
+            setCurrentView('admin');
           } else {
             setCurrentView('dashboard');
           }

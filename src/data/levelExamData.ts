@@ -1,9 +1,9 @@
 import { EndOfLevelExam } from '../types/academy';
 
-export const LEVEL_EXAMS: EndOfLevelExam[] = [
+const RAW_LEVEL_EXAMS: EndOfLevelExam[] = [
   {
     levelNumber: 1,
-    title: 'Level 1 Comprehensive Certification Exam',
+    title: 'Level 1 General Quiz & Certification Exam',
     subtitle: 'Excel Foundations & Core Workbook Skills',
     description:
       'Demonstrate your mastery of the Excel spreadsheet screen, cell addresses, basic arithmetic formulas, AutoSum, cell formatting, and workbook organization.',
@@ -852,3 +852,21 @@ export const LEVEL_EXAMS: EndOfLevelExam[] = [
     ],
   },
 ];
+
+export const LEVEL_EXAMS: EndOfLevelExam[] = RAW_LEVEL_EXAMS.map((exam) => ({
+  ...exam,
+  title: `Level ${exam.levelNumber} General Quiz & Certification Exam`,
+  questions: exam.questions.map((q, qIdx) => {
+    const len = q.options.length;
+    const shift = (exam.levelNumber + qIdx) % len;
+    if (shift === 0) return q;
+    const rotatedOptions = q.options.map((_, i) => q.options[(i - shift + len) % len]);
+    const newCorrectIdx = (q.correctOptionIndex + shift) % len;
+    return {
+      ...q,
+      options: rotatedOptions,
+      correctOptionIndex: newCorrectIdx,
+    };
+  }),
+}));
+

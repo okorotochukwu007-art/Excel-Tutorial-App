@@ -2135,6 +2135,110 @@ async function startServer() {
     }
   });
 
+  // 16b. Check Email Confirmation Status (Allows automatic login as soon as email link is clicked)
+  app.post('/api/auth/check-confirmation', async (req: Request, res: Response) => {
+    try {
+      const email = String(req.body?.email || '').trim().toLowerCase();
+      if (!email) {
+        return res.status(400).json({ ok: false, error: 'Email is required.' });
+      }
+      const supabase = getServerSupabaseClient();
+      if (!supabase) {
+        return res.json({ ok: true, exists: false, confirmed: false });
+      }
+
+      const { data: listData } = await supabase.auth.admin.listUsers();
+      const existingUser = (listData?.users || []).find(
+        (u: any) => u.email?.toLowerCase() === email
+      );
+      if (!existingUser) {
+        return res.json({ ok: true, exists: false, confirmed: false });
+      }
+
+      const isConfirmed = Boolean(
+        existingUser.email_confirmed_at || existingUser.confirmed_at
+      );
+
+      return res.json({
+        ok: true,
+        exists: true,
+        confirmed: isConfirmed,
+        userId: existingUser.id,
+      });
+    } catch (err: any) {
+      return res.status(500).json({
+        ok: false,
+        error: err.message || 'Failed to check confirmation status.',
+      });
+    }
+  });
+
+  // 17. Reset Student Password Server-Side (Supports Forgot Password Recovery Flow)
+  app.post('/api/auth/reset-password', async (req: Request, res: Response) => {
+    try {
+      const email = String(req.body?.email || '').trim().toLowerCase();
+      const newPassword = String(req.body?.newPassword || '');
+
+      if (!email || !email.includes('@')) {
+        return res.status(400).json({
+          ok: false,
+          error: 'Please provide a valid registered email address.',
+        });
+      }
+      if (!newPassword || newPassword.length < 8) {
+        return res.status(400).json({
+          ok: false,
+          error: 'New password must be at least 8 characters long.',
+        });
+      }
+
+      const supabase = getServerSupabaseClient();
+      if (!supabase) {
+        return res.status(503).json({
+          ok: false,
+          error: 'Supabase is not configured on the server.',
+        });
+      }
+
+      const { data: listData } = await supabase.auth.admin.listUsers();
+      const existingUser = (listData?.users || []).find(
+        (u: any) => u.email?.toLowerCase() === email
+      );
+
+      if (!existingUser) {
+        return res.status(404).json({
+          ok: false,
+          error: 'No student account found with that email address. Please sign up first.',
+        });
+      }
+
+      const { error: updateErr } = await supabase.auth.admin.updateUserById(
+        existingUser.id,
+        {
+          password: newPassword,
+          email_confirm: true,
+        }
+      );
+
+      if (updateErr) {
+        return res.status(400).json({
+          ok: false,
+          error: updateErr.message || 'Could not update password.',
+        });
+      }
+
+      return res.json({
+        ok: true,
+        message: 'Your password has been reset. You can now log in with your new password.',
+      });
+    } catch (err: any) {
+      return res.status(500).json({
+        ok: false,
+        error: err.message || 'Failed to reset password.',
+      });
+    }
+  });
+
   // Vite middleware for development / static serving for production
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({

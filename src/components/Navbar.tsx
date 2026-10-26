@@ -6,10 +6,9 @@ import {
   BookOpen,
   PlayCircle,
   LayoutDashboard,
-  Settings,
+  Briefcase,
   LogOut,
   Shield,
-  User,
   MessageCircle,
 } from 'lucide-react';
 import { Profile } from '../types/academy';
@@ -21,9 +20,9 @@ export type AppView =
   | 'home'
   | 'curriculum'
   | 'dashboard'
+  | 'projects'
   | 'lesson'
   | 'admin'
-  | 'playground'
   | 'shortcuts';
 
 interface NavbarProps {
@@ -91,18 +90,7 @@ export const Navbar: React.FC<NavbarProps> = ({
         </button>
 
         {/* Zone 2: Clean single-line text navigation links */}
-        <nav className="hidden md:flex items-center gap-7 text-sm font-medium text-slate-600">
-          <button
-            type="button"
-            onClick={() => handleNavClick('home')}
-            className={`hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 py-5 border-b-2 cursor-pointer ${
-              currentView === 'home'
-                ? 'border-emerald-700 text-slate-900 font-semibold'
-                : 'border-transparent'
-            }`}
-          >
-            Explore
-          </button>
+        <nav className="hidden md:flex items-center gap-6 text-sm font-medium text-slate-600">
           <button
             type="button"
             onClick={() => handleNavClick('curriculum')}
@@ -116,17 +104,15 @@ export const Navbar: React.FC<NavbarProps> = ({
           </button>
           <button
             type="button"
-            onClick={() => handleNavClick('playground')}
+            onClick={() => handleNavClick('projects')}
             className={`hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 py-5 border-b-2 flex items-center gap-1.5 cursor-pointer ${
-              currentView === 'playground'
+              currentView === 'projects'
                 ? 'border-emerald-700 text-slate-900 font-semibold'
                 : 'border-transparent'
             }`}
           >
-            <span>Formula Playground</span>
-            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
-              Live
-            </span>
+            <Briefcase className="w-3.5 h-3.5 text-emerald-700" />
+            <span>Project</span>
           </button>
           <button
             type="button"
@@ -166,48 +152,32 @@ export const Navbar: React.FC<NavbarProps> = ({
               >
                 Classroom
               </button>
-              <button
-                type="button"
-                onClick={() => handleNavClick('admin')}
-                className={`hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 py-5 border-b-2 flex items-center gap-1.5 cursor-pointer ${
-                  currentView === 'admin'
-                    ? 'border-emerald-700 text-slate-900 font-semibold'
-                    : 'border-transparent'
-                }`}
-              >
-                <Shield className={`w-3.5 h-3.5 ${isInstructorOkoro ? 'text-emerald-700' : 'text-slate-400'}`} />
-                <span>Instructor Admin</span>
-                {isInstructorOkoro && (
+              {isInstructorOkoro && (
+                <button
+                  type="button"
+                  onClick={() => handleNavClick('admin')}
+                  className={`hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 py-5 border-b-2 flex items-center gap-1.5 cursor-pointer ${
+                    currentView === 'admin'
+                      ? 'border-emerald-700 text-slate-900 font-semibold'
+                      : 'border-transparent'
+                  }`}
+                >
+                  <Shield className="w-3.5 h-3.5 text-emerald-700" />
+                  <span>Instructor Admin</span>
                   <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
                     Okoro T.
                   </span>
-                )}
-              </button>
+                </button>
+              )}
             </>
           ) : (
-            <>
-              <button
-                type="button"
-                onClick={() => handleNavClick('home', 'how-it-works')}
-                className="hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 py-5 border-b-2 border-transparent cursor-pointer"
-              >
-                How It Works
-              </button>
-              <button
-                type="button"
-                onClick={() => handleNavClick('home', 'project-showcase')}
-                className="hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 py-5 border-b-2 border-transparent cursor-pointer"
-              >
-                Projects
-              </button>
-              <button
-                type="button"
-                onClick={() => handleNavClick('home', 'about-academy')}
-                className="hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 py-5 border-b-2 border-transparent cursor-pointer"
-              >
-                About
-              </button>
-            </>
+            <button
+              type="button"
+              onClick={() => handleNavClick('home', 'about-academy')}
+              className="hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 py-5 border-b-2 border-transparent cursor-pointer"
+            >
+              About
+            </button>
           )}
         </nav>
 
@@ -235,105 +205,106 @@ export const Navbar: React.FC<NavbarProps> = ({
                   onClick={() => setUserMenuOpen(!userMenuOpen)}
                   className="flex items-center gap-2 py-1.5 px-2 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
                 >
-                <div className="w-8 h-8 rounded-full bg-slate-900 text-white text-xs font-bold flex items-center justify-center shrink-0">
-                  {userInitials}
-                </div>
-                <span className="hidden sm:inline text-xs font-semibold text-slate-800 max-w-[130px] truncate">
-                  {currentUser?.fullName}
-                </span>
-                <ChevronDown className="w-4 h-4 text-slate-500" />
-              </button>
-
-              {userMenuOpen && (
-                <div className="absolute right-0 mt-2 w-64 bg-white border border-slate-200 rounded-xl shadow-lg py-2 z-50 text-xs">
-                  <div className="px-4 py-3 border-b border-slate-100">
-                    <div className="font-bold text-slate-900 truncate">
-                      {currentUser?.fullName}
-                    </div>
-                    <div className="text-slate-500 truncate mt-0.5">
-                      {currentUser?.email}
-                    </div>
-                    <div className="mt-1.5 text-[11px] font-medium text-emerald-800">
-                      {isInstructorOkoro
-                        ? 'Data Analyst with 4 years of experience in the financial services industry'
-                        : 'Enrolled Learner'}
-                    </div>
+                  <div className="w-8 h-8 rounded-full bg-slate-900 text-white text-xs font-bold flex items-center justify-center shrink-0">
+                    {userInitials}
                   </div>
+                  <span className="hidden sm:inline text-xs font-semibold text-slate-800 max-w-[130px] truncate">
+                    {currentUser?.fullName}
+                  </span>
+                  <ChevronDown className="w-4 h-4 text-slate-500" />
+                </button>
 
-                  <div className="py-1">
-                    <button
-                      type="button"
-                      onClick={() => handleNavClick('dashboard')}
-                      className="w-full px-4 py-2.5 text-left text-slate-700 hover:bg-slate-50 flex items-center gap-2.5 cursor-pointer"
-                    >
-                      <LayoutDashboard className="w-4 h-4 text-slate-500" />
-                      <span>My Learning Dashboard</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleNavClick('lesson')}
-                      className="w-full px-4 py-2.5 text-left text-slate-700 hover:bg-slate-50 flex items-center gap-2.5 cursor-pointer"
-                    >
-                      <PlayCircle className="w-4 h-4 text-slate-500" />
-                      <span>Resume Classroom</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleNavClick('curriculum')}
-                      className="w-full px-4 py-2.5 text-left text-slate-700 hover:bg-slate-50 flex items-center gap-2.5 cursor-pointer"
-                    >
-                      <BookOpen className="w-4 h-4 text-slate-500" />
-                      <span>Course Syllabus</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleNavClick('admin')}
-                      className="w-full px-4 py-2.5 text-left text-slate-700 hover:bg-slate-50 flex items-center justify-between cursor-pointer"
-                    >
-                      <div className="flex items-center gap-2.5">
-                        <Shield className={`w-4 h-4 ${isInstructorOkoro ? 'text-emerald-700' : 'text-slate-400'}`} />
-                        <span>Instructor Admin Console</span>
+                {userMenuOpen && (
+                  <div className="absolute right-0 mt-2 w-64 bg-white border border-slate-200 rounded-xl shadow-lg py-2 z-50 text-xs">
+                    <div className="px-4 py-3 border-b border-slate-100">
+                      <div className="font-bold text-slate-900 truncate">
+                        {currentUser?.fullName}
                       </div>
-                      {isInstructorOkoro && (
-                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">
-                          Okoro T.
-                        </span>
-                      )}
-                    </button>
-                  </div>
+                      <div className="text-slate-500 truncate mt-0.5">
+                        {currentUser?.email}
+                      </div>
+                      <div className="mt-1.5 text-[11px] font-medium text-emerald-800">
+                        {isInstructorOkoro
+                          ? 'Data Analyst with 4 years of experience in the financial services industry'
+                          : 'Enrolled Learner'}
+                      </div>
+                    </div>
 
-                  <div className="border-t border-slate-100 pt-1 mt-1">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setUserMenuOpen(false);
-                        if (onLogout) onLogout();
-                      }}
-                      className="w-full px-4 py-2.5 text-left text-rose-700 hover:bg-rose-50 font-medium flex items-center gap-2.5 cursor-pointer"
-                    >
-                      <LogOut className="w-4 h-4" />
-                      <span>Log Out</span>
-                    </button>
+                    <div className="py-1">
+                      <button
+                        type="button"
+                        onClick={() => handleNavClick('dashboard')}
+                        className="w-full px-4 py-2.5 text-left text-slate-700 hover:bg-slate-50 flex items-center gap-2.5 cursor-pointer"
+                      >
+                        <LayoutDashboard className="w-4 h-4 text-slate-500" />
+                        <span>My Learning Dashboard</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleNavClick('projects')}
+                        className="w-full px-4 py-2.5 text-left text-slate-700 hover:bg-slate-50 flex items-center gap-2.5 cursor-pointer"
+                      >
+                        <Briefcase className="w-4 h-4 text-emerald-700" />
+                        <span>Project &amp; Certificate Page</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleNavClick('lesson')}
+                        className="w-full px-4 py-2.5 text-left text-slate-700 hover:bg-slate-50 flex items-center gap-2.5 cursor-pointer"
+                      >
+                        <PlayCircle className="w-4 h-4 text-slate-500" />
+                        <span>Resume Classroom</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleNavClick('curriculum')}
+                        className="w-full px-4 py-2.5 text-left text-slate-700 hover:bg-slate-50 flex items-center gap-2.5 cursor-pointer"
+                      >
+                        <BookOpen className="w-4 h-4 text-slate-500" />
+                        <span>Course Syllabus</span>
+                      </button>
+                      {isInstructorOkoro && (
+                        <button
+                          type="button"
+                          onClick={() => handleNavClick('admin')}
+                          className="w-full px-4 py-2.5 text-left text-slate-700 hover:bg-slate-50 flex items-center justify-between cursor-pointer"
+                        >
+                          <div className="flex items-center gap-2.5">
+                            <Shield className="w-4 h-4 text-emerald-700" />
+                            <span>Instructor Admin Console</span>
+                          </div>
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                            Okoro T.
+                          </span>
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="border-t border-slate-100 pt-1 mt-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setUserMenuOpen(false);
+                          if (onLogout) onLogout();
+                        }}
+                        className="w-full px-4 py-2.5 text-left text-rose-700 hover:bg-rose-50 font-medium flex items-center gap-2.5 cursor-pointer"
+                      >
+                        <LogOut className="w-4 h-4" />
+                        <span>Log Out</span>
+                      </button>
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
+              </div>
             </div>
-          </div>
           ) : (
             <div className="flex items-center gap-3">
               <button
                 type="button"
                 onClick={() => onOpenAuthModal('login')}
-                className="hidden sm:inline-block px-3 py-2 text-xs font-semibold text-slate-700 hover:text-slate-900 whitespace-nowrap shrink-0 cursor-pointer"
-              >
-                Log In
-              </button>
-              <button
-                type="button"
-                onClick={() => onOpenAuthModal('register')}
                 className="px-4 py-2 text-xs font-semibold text-white bg-emerald-800 rounded-lg hover:bg-emerald-900 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
               >
-                Join for Free
+                Log In
               </button>
             </div>
           )}
@@ -371,13 +342,6 @@ export const Navbar: React.FC<NavbarProps> = ({
           <div className="flex flex-col space-y-1 text-sm font-medium text-slate-700">
             <button
               type="button"
-              onClick={() => handleNavClick('home')}
-              className="text-left py-2.5 hover:text-slate-900 border-b border-slate-100"
-            >
-              Explore Academy
-            </button>
-            <button
-              type="button"
               onClick={() => handleNavClick('curriculum')}
               className="text-left py-2.5 hover:text-slate-900 border-b border-slate-100"
             >
@@ -385,12 +349,12 @@ export const Navbar: React.FC<NavbarProps> = ({
             </button>
             <button
               type="button"
-              onClick={() => handleNavClick('playground')}
+              onClick={() => handleNavClick('projects')}
               className="text-left py-2.5 hover:text-slate-900 border-b border-slate-100 flex items-center justify-between"
             >
-              <span>Formula Playground</span>
+              <span>Project &amp; Certificate Page</span>
               <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">
-                Live Evaluator
+                4 Projects
               </span>
             </button>
             <button
@@ -419,21 +383,21 @@ export const Navbar: React.FC<NavbarProps> = ({
                 >
                   Course Classroom
                 </button>
-                <button
-                  type="button"
-                  onClick={() => handleNavClick('admin')}
-                  className="text-left py-2.5 hover:text-slate-900 border-b border-slate-100 flex items-center justify-between"
-                >
-                  <div className="flex items-center gap-2">
-                    <Shield className={`w-4 h-4 ${isInstructorOkoro ? 'text-emerald-700' : 'text-slate-400'}`} />
-                    <span>Instructor Admin Console</span>
-                  </div>
-                  {isInstructorOkoro && (
+                {isInstructorOkoro && (
+                  <button
+                    type="button"
+                    onClick={() => handleNavClick('admin')}
+                    className="text-left py-2.5 hover:text-slate-900 border-b border-slate-100 flex items-center justify-between"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Shield className="w-4 h-4 text-emerald-700" />
+                      <span>Instructor Admin Console</span>
+                    </div>
                     <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">
                       Okoro T.
                     </span>
-                  )}
-                </button>
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => {
@@ -447,44 +411,18 @@ export const Navbar: React.FC<NavbarProps> = ({
                 </button>
               </>
             ) : (
-              <>
+              <div className="pt-2 flex items-center gap-3">
                 <button
                   type="button"
-                  onClick={() => handleNavClick('home', 'how-it-works')}
-                  className="text-left py-2.5 hover:text-slate-900 border-b border-slate-100"
+                  onClick={() => {
+                    setMobileMenuOpen(false);
+                    onOpenAuthModal('login');
+                  }}
+                  className="w-full py-2.5 text-xs font-semibold text-white bg-emerald-800 rounded-lg text-center"
                 >
-                  How It Works
+                  Log In
                 </button>
-                <button
-                  type="button"
-                  onClick={() => handleNavClick('home', 'project-showcase')}
-                  className="text-left py-2.5 hover:text-slate-900 border-b border-slate-100"
-                >
-                  Portfolio Projects
-                </button>
-                <div className="pt-2 flex items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMobileMenuOpen(false);
-                      onOpenAuthModal('login');
-                    }}
-                    className="flex-1 py-2.5 text-xs font-semibold text-slate-800 bg-slate-100 rounded-lg text-center"
-                  >
-                    Log In
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMobileMenuOpen(false);
-                      onOpenAuthModal('register');
-                    }}
-                    className="flex-1 py-2.5 text-xs font-semibold text-white bg-emerald-800 rounded-lg text-center"
-                  >
-                    Join for Free
-                  </button>
-                </div>
-              </>
+              </div>
             )}
           </div>
         </div>

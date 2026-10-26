@@ -2,125 +2,89 @@ import * as XLSX from 'xlsx';
 import { CapstoneProject } from '../data/capstoneProjectsData';
 
 /**
- * Generate and trigger download of Starter Challenge .xlsx workbook for Capstone
+ * Generate and trigger download of Starter Challenge .xlsx workbook for Real-Life Practice Projects
  */
 export function downloadCapstoneStarterWorkbook(project: CapstoneProject): void {
   const wb = XLSX.utils.book_new();
 
-  // Sheet 1: Project Instructions & Objectives
+  // Sheet 1: Project Brief & Tasks
   const instructionsData: (string | number)[][] = [
-    ['EXCEL TO DATA ANALYST ACADEMY — CAPSTONE PORTFOLIO PROJECT'],
-    ['Project #:', `Project ${project.projectNumber}: ${project.title}`],
+    ['EXCEL TO DATA ANALYST ACADEMY — REAL-LIFE PRACTICE PROJECT'],
+    ['Project #:', `Project ${project.projectNumber} of 4: ${project.title}`],
     ['Industry:', project.industry],
     ['Category:', project.category],
-    ['Target Deliverable:', project.subtitle],
+    ['Instructor:', 'Okoro Tochuwku (Lead Instructor)'],
     [''],
-    ['BUSINESS SCENARIO & CONTEXT:'],
+    ['BUSINESS SCENARIO:'],
     [project.businessScenario],
     [''],
-    ['CORE DELIVERABLES & OBJECTIVES:'],
-    ...project.keyObjectives.map((obj, i) => [`${i + 1}.`, obj]),
+    ['PROBLEM STATEMENT:'],
+    [project.problemStatement],
     [''],
-    ['REQUIRED EXCEL FORMULAS & FUNCTIONS:'],
-    ...project.requiredFormulas.map((f) => ['•', f]),
+    ['STEP-BY-STEP PROJECT TASKS:'],
+    ...project.keyObjectives.map((obj, i) => [`Task ${i + 1}:`, obj]),
     [''],
-    ['ENTERPRISE GRADING RUBRIC STANDARDS:'],
-    ...project.rubric.map((dim) => [
-      `[${dim.name} — ${dim.maxPoints} pts Max]`,
-      dim.description,
-    ]),
+    ['RECOMMENDED EXCEL FORMULAS:'],
+    ...project.requiredFormulas.map((f) => ['Formula:', f]),
     [''],
-    ['INSTRUCTIONS FOR COMPLETION:'],
-    ['1. Go to the "Raw_Data" or "Model_Template" sheet.'],
-    ['2. Build your calculations, PivotTables, and summary schedules.'],
-    ['3. Verify all numbers reconcile and formatting meets enterprise presentation standards.'],
+    ['HOW TO SUBMIT THIS PROJECT TO YOUR INSTRUCTOR:'],
+    ['Step 1:', 'Open the "Raw_Dataset" sheet in this workbook and complete all required formulas and PivotTables.'],
+    ['Step 2:', 'Fill in your findings on the "Instructor_Submission_Sheet" tab and save your Excel workbook (.xlsx).'],
+    ['Step 3:', 'Return to the My Learning -> Real-Life Projects page, attach your completed workbook and executive summary, and click "Submit Project to Instructor".'],
   ];
 
   const wsInstructions = XLSX.utils.aoa_to_sheet(instructionsData);
-  wsInstructions['!cols'] = [{ wch: 25 }, { wch: 80 }];
-  XLSX.utils.book_append_sheet(wb, wsInstructions, 'Instructions_Rubric');
+  wsInstructions['!cols'] = [{ wch: 24 }, { wch: 95 }];
+  XLSX.utils.book_append_sheet(wb, wsInstructions, 'Project_Brief_&_Tasks');
 
-  // Sheet 2: Raw / Starter Data
+  // Sheet 2: Raw Dataset (14-16 realistic records)
+  const datasetRows = project.fullDatasetRows || project.samplePreviewRows;
   const starterData: (string | number)[][] = [
     project.sampleHeaders,
-    ...project.samplePreviewRows.map((r) => [...r]),
+    ...datasetRows.map((r) => [...r]),
   ];
 
-  // Add more realistic rows if needed
   const wsData = XLSX.utils.aoa_to_sheet(starterData);
-  wsData['!cols'] = project.sampleHeaders.map(() => ({ wch: 18 }));
+  wsData['!cols'] = project.sampleHeaders.map(() => ({ wch: 22 }));
   XLSX.utils.book_append_sheet(wb, wsData, 'Raw_Dataset');
 
-  // Sheet 3: Deliverable Checklist
+  // Sheet 3 (Optional): Reference Lookup Table (e.g., Master SKU Catalog or CBN Risk Table)
+  if (project.referenceTableHeaders && project.referenceTableRows) {
+    const refData: (string | number)[][] = [
+      project.referenceTableHeaders,
+      ...project.referenceTableRows.map((r) => [...r]),
+    ];
+    const wsRef = XLSX.utils.aoa_to_sheet(refData);
+    wsRef['!cols'] = project.referenceTableHeaders.map(() => ({ wch: 24 }));
+    XLSX.utils.book_append_sheet(wb, wsRef, 'Reference_Lookup_Table');
+  }
+
+  // Sheet 4: Instructor Submission & Deliverables Checklist
   const checklistData: (string | number)[][] = [
-    ['DELIVERABLE ID', 'CHECKLIST REQUIREMENT', 'STATUS', 'SELF ASSESSMENT NOTES'],
+    ['DELIVERABLE ID', 'REQUIRED PROJECT DELIVERABLE', 'COMPLETED? (YES/NO)', 'STUDENT NOTES / SUMMARY FOR INSTRUCTOR'],
     ...project.deliverableChecklist.map((item) => [
-      item.id,
-      item.label + ' — ' + item.details,
-      'PENDING',
+      item.id.toUpperCase(),
+      `${item.label} — ${item.details}`,
+      'NO',
       '',
     ]),
+    ['', '', '', ''],
+    ['EXECUTIVE SUMMARY', 'Write your 3 key business findings and recommendations below:', '', ''],
+    ['Finding 1:', '', '', ''],
+    ['Finding 2:', '', '', ''],
+    ['Finding 3:', '', '', ''],
   ];
   const wsChecklist = XLSX.utils.aoa_to_sheet(checklistData);
-  wsChecklist['!cols'] = [{ wch: 18 }, { wch: 65 }, { wch: 14 }, { wch: 30 }];
-  XLSX.utils.book_append_sheet(wb, wsChecklist, 'Deliverables_Checklist');
+  wsChecklist['!cols'] = [{ wch: 20 }, { wch: 70 }, { wch: 22 }, { wch: 45 }];
+  XLSX.utils.book_append_sheet(wb, wsChecklist, 'Instructor_Submission_Sheet');
 
   // Write and download file
   XLSX.writeFile(wb, project.starterWorkbookName);
 }
 
 /**
- * Generate and trigger download of Solution Reference .xlsx workbook for Capstone
+ * Keep solution export helper for backwards compatibility if referenced
  */
 export function downloadCapstoneSolutionWorkbook(project: CapstoneProject): void {
-  const wb = XLSX.utils.book_new();
-
-  // Sheet 1: Executive Findings Summary
-  const memoData: (string | number)[][] = [
-    ['EXCEL TO DATA ANALYST ACADEMY — MODEL SOLUTION & EXECUTIVE MEMO'],
-    ['Project #:', `Project ${project.projectNumber}: ${project.title}`],
-    ['Evaluation Status:', '100/100 Enterprise Benchmark Solution'],
-    [''],
-    ['EXECUTIVE COMMERCIAL MEMO & KEY FINDINGS:'],
-    ...project.executiveTakeaways.map((takeaway, i) => [`Key Finding #${i + 1}:`, takeaway]),
-    [''],
-    ['MODEL FORMULA ARCHITECTURE:'],
-    ...project.requiredFormulas.map((f) => ['Formula Applied:', f]),
-    [''],
-    ['GRADING RUBRIC BREAKDOWN (100 / 100):'],
-    ...project.rubric.map((dim) => [
-      dim.name,
-      `Score: ${dim.maxPoints}/${dim.maxPoints} pts (Exemplary)`,
-      dim.description,
-    ]),
-  ];
-
-  const wsMemo = XLSX.utils.aoa_to_sheet(memoData);
-  wsMemo['!cols'] = [{ wch: 25 }, { wch: 80 }];
-  XLSX.utils.book_append_sheet(wb, wsMemo, 'Executive_Memo');
-
-  // Sheet 2: Completed Model Dataset & Formulas
-  const completedData: (string | number)[][] = [
-    project.sampleHeaders,
-    ...project.samplePreviewRows,
-  ];
-
-  const wsCompleted = XLSX.utils.aoa_to_sheet(completedData);
-  wsCompleted['!cols'] = project.sampleHeaders.map(() => ({ wch: 18 }));
-  XLSX.utils.book_append_sheet(wb, wsCompleted, 'Model_Analysis');
-
-  // Sheet 3: Rubric Audit Sheet
-  const auditData: (string | number)[][] = [
-    ['DIMENSION', 'MAX POINTS', 'ACHIEVED', 'AUDIT NOTE'],
-    ['1. Data Hygiene & Table Architecture', 25, 25, 'Formal tbl_* table used, strict typing, zero blanks'],
-    ['2. Formula Accuracy & Scalability', 25, 25, 'Dynamic XLOOKUP/SUMIFS used, absolute referencing intact'],
-    ['3. Visual Hierarchy & Dashboard Polish', 25, 25, 'KPI cards aligned, clean typography, consistent formatting'],
-    ['4. Business Insights & Executive Commentary', 25, 25, 'Exact metric citations with dollar impact and percentages'],
-    ['TOTAL SCORE', 100, 100, 'CERTIFIED PORTFOLIO GRADE: PASSED WITH DISTINCTION'],
-  ];
-  const wsAudit = XLSX.utils.aoa_to_sheet(auditData);
-  wsAudit['!cols'] = [{ wch: 38 }, { wch: 14 }, { wch: 14 }, { wch: 60 }];
-  XLSX.utils.book_append_sheet(wb, wsAudit, 'Enterprise_Rubric_Audit');
-
-  XLSX.writeFile(wb, project.solutionWorkbookName);
+  downloadCapstoneStarterWorkbook(project);
 }

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   X,
   Award,
@@ -9,8 +9,7 @@ import {
   RotateCcw,
   Download,
   Eye,
-  FileCheck2,
-  Sparkles,
+  ArrowRight,
 } from 'lucide-react';
 import { EndOfLevelExam, LevelCertificate, QuizAttempt } from '../types/academy';
 import {
@@ -23,9 +22,11 @@ interface LevelExamModalProps {
   studentName: string;
   studentEmail?: string;
   isOpen: boolean;
+  canExportCertificate?: boolean;
   onClose: () => void;
   onRecordExamAttempt: (attempt: QuizAttempt) => void;
   onOpenCertificatePreview: (cert: LevelCertificate) => void;
+  onAdvanceToNextLevel?: (nextLevelNumber: number) => void;
 }
 
 export const LevelExamModal: React.FC<LevelExamModalProps> = ({
@@ -33,14 +34,25 @@ export const LevelExamModal: React.FC<LevelExamModalProps> = ({
   studentName,
   studentEmail,
   isOpen,
+  canExportCertificate = false,
   onClose,
   onRecordExamAttempt,
   onOpenCertificatePreview,
+  onAdvanceToNextLevel,
 }) => {
   const [currentQuestionIdx, setCurrentQuestionIdx] = useState(0);
   const [selectedAnswers, setSelectedAnswers] = useState<Record<string, number>>({});
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [showReview, setShowReview] = useState(false);
+
+  useEffect(() => {
+    if (isOpen) {
+      setCurrentQuestionIdx(0);
+      setSelectedAnswers({});
+      setIsSubmitted(false);
+      setShowReview(false);
+    }
+  }, [exam.levelNumber, isOpen]);
 
   if (!isOpen) return null;
 
@@ -71,6 +83,7 @@ export const LevelExamModal: React.FC<LevelExamModalProps> = ({
   const handleSubmitExam = () => {
     const { correct, scorePercent, passed } = calculateResults();
     setIsSubmitted(true);
+    setShowReview(!passed);
 
     onRecordExamAttempt({
       id: `attempt-exam-lvl-${exam.levelNumber}-${Date.now()}`,
@@ -111,19 +124,21 @@ export const LevelExamModal: React.FC<LevelExamModalProps> = ({
         {/* HEADER */}
         <div className="bg-slate-900 text-white p-5 sm:p-6 flex items-start justify-between gap-4">
           <div className="space-y-1">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <span className="px-2.5 py-0.5 rounded bg-emerald-900 text-emerald-200 border border-emerald-700 text-[10px] font-mono font-bold uppercase tracking-wider">
-                Level {exam.levelNumber} Certification Exam
+                End of Level {exam.levelNumber} General Quiz
               </span>
-              <span className="text-xs text-slate-400 font-mono">
-                Passing Score: {exam.passingScorePercent}%
+              <span className="text-xs text-slate-300 font-mono">
+                Passing Score: {exam.passingScorePercent}% · Unlimited Retakes Allowed
               </span>
             </div>
             <h3 className="text-lg sm:text-xl font-bold text-white">
               {exam.title}
             </h3>
             <p className="text-xs text-slate-300">
-              {exam.subtitle}
+              {exam.levelNumber < 6
+                ? `Pass this General Quiz (${exam.passingScorePercent}%+) to unlock Level ${exam.levelNumber + 1} and earn your Level ${exam.levelNumber} Certificate.`
+                : `Pass this final Capstone General Quiz (${exam.passingScorePercent}%+) to complete Level 6 and earn your Master Certificate.`}
             </p>
           </div>
 
@@ -246,14 +261,14 @@ export const LevelExamModal: React.FC<LevelExamModalProps> = ({
                     className="px-6 py-2 bg-emerald-800 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg shadow-sm flex items-center gap-2 cursor-pointer"
                   >
                     <CheckCircle2 className="w-4 h-4" />
-                    Submit Final Exam
+                    Submit Level {exam.levelNumber} General Quiz
                   </button>
                 )}
               </div>
             </div>
           </div>
         ) : (
-          /* EXAM RESULTS & CERTIFICATION UNLOCK VIEW */
+          /* EXAM RESULTS & NEXT LEVEL UNLOCK VIEW */
           <div className="p-6 space-y-6">
             {results && results.passed ? (
               <div className="bg-emerald-50 border-2 border-emerald-500 rounded-2xl p-6 text-center space-y-4">
@@ -262,7 +277,7 @@ export const LevelExamModal: React.FC<LevelExamModalProps> = ({
                 </div>
                 <div className="space-y-1">
                   <span className="text-xs font-mono font-bold text-emerald-800 uppercase tracking-wider">
-                    Official Certification Exam Passed!
+                    Level {exam.levelNumber} General Quiz Passed!
                   </span>
                   <h4 className="text-2xl font-black text-slate-900">
                     Congratulations, {studentName}!
@@ -273,31 +288,54 @@ export const LevelExamModal: React.FC<LevelExamModalProps> = ({
                       {results.scorePercent}%
                     </strong>{' '}
                     ({results.correct} of {totalQuestions} correct) on the Level{' '}
-                    {exam.levelNumber} Certification Exam. Your official verified completion credential is ready!
+                    {exam.levelNumber} General Quiz.{' '}
+                    {exam.levelNumber < 6
+                      ? `Level ${exam.levelNumber + 1} is now unlocked for you!`
+                      : 'You have completed all 6 curriculum levels!'}
                   </p>
                 </div>
 
-                {certificateData && (
-                  <div className="pt-2 flex flex-wrap items-center justify-center gap-3">
+                <div className="pt-2 flex flex-wrap items-center justify-center gap-3">
+                  {exam.levelNumber < 6 && onAdvanceToNextLevel && (
                     <button
                       type="button"
-                      onClick={() => downloadLevelCertificatePdf(certificateData)}
-                      className="px-5 py-2.5 bg-emerald-800 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow-md flex items-center gap-2 cursor-pointer transition-all hover:scale-105"
+                      onClick={() => {
+                        onClose();
+                        onAdvanceToNextLevel(exam.levelNumber + 1);
+                      }}
+                      className="px-6 py-2.5 bg-slate-900 hover:bg-emerald-800 text-white text-xs font-bold rounded-xl shadow-md flex items-center gap-2 cursor-pointer transition-all hover:scale-105"
                     >
-                      <Download className="w-4 h-4" />
-                      <span>Download Branded PDF Certificate</span>
+                      <span>Continue to Level {exam.levelNumber + 1}</span>
+                      <ArrowRight className="w-4 h-4" />
                     </button>
+                  )}
 
-                    <button
-                      type="button"
-                      onClick={() => onOpenCertificatePreview(certificateData)}
-                      className="px-4 py-2.5 bg-white border border-slate-300 text-slate-800 text-xs font-semibold rounded-xl hover:bg-slate-50 transition-colors flex items-center gap-2 cursor-pointer"
-                    >
-                      <Eye className="w-4 h-4 text-emerald-800" />
-                      <span>Preview Certificate</span>
-                    </button>
-                  </div>
-                )}
+                  {certificateData && canExportCertificate ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => downloadLevelCertificatePdf(certificateData)}
+                        className="px-5 py-2.5 bg-emerald-800 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow-md flex items-center gap-2 cursor-pointer transition-all"
+                      >
+                        <Download className="w-4 h-4" />
+                        <span>Download Certificate (.PDF)</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => onOpenCertificatePreview(certificateData)}
+                        className="px-4 py-2.5 bg-white border border-slate-300 text-slate-800 text-xs font-semibold rounded-xl hover:bg-slate-50 transition-colors flex items-center gap-2 cursor-pointer"
+                      >
+                        <Eye className="w-4 h-4 text-emerald-800" />
+                        <span>Preview Certificate</span>
+                      </button>
+                    </>
+                  ) : (
+                    <div className="w-full pt-2 text-[11px] font-medium text-emerald-900 bg-emerald-100/70 border border-emerald-300 rounded-xl px-4 py-2.5">
+                      Exam Pass Recorded! Complete all modules, pass all 6 level exams, and submit all 4 real-life projects to your instructor on the <strong>My Learning</strong> page to unlock your official Certificate export.
+                    </div>
+                  )}
+                </div>
               </div>
             ) : (
               <div className="bg-amber-50 border border-amber-300 rounded-2xl p-6 text-center space-y-3">
@@ -305,22 +343,25 @@ export const LevelExamModal: React.FC<LevelExamModalProps> = ({
                   <AlertCircle className="w-6 h-6" />
                 </div>
                 <h4 className="text-lg font-bold text-slate-900">
-                  Keep Practicing in Excel
+                  Almost There! Retake Anytime to Pass
                 </h4>
                 <p className="text-xs text-slate-600 max-w-md mx-auto">
                   You scored{' '}
                   <strong className="font-mono text-amber-900">
                     {results?.scorePercent}%
-                  </strong>
-                  . A passing score of {exam.passingScorePercent}% is required to unlock your official verified certificate. You can review the answers below and retake the exam at any time.
+                  </strong>{' '}
+                  ({results?.correct} of {totalQuestions} correct). A score of{' '}
+                  <strong>{exam.passingScorePercent}%</strong> is required to pass Level {exam.levelNumber}
+                  {exam.levelNumber < 6 ? ` and move on to Level ${exam.levelNumber + 1}` : ''}.
+                  Review the explanations below and retake the quiz—you can take it as many times as you need!
                 </p>
                 <button
                   type="button"
                   onClick={handleRetake}
-                  className="px-4 py-2 bg-amber-700 hover:bg-amber-600 text-white text-xs font-bold rounded-lg flex items-center gap-2 mx-auto cursor-pointer"
+                  className="px-5 py-2.5 bg-amber-700 hover:bg-amber-600 text-white text-xs font-bold rounded-lg flex items-center gap-2 mx-auto cursor-pointer shadow-xs"
                 >
                   <RotateCcw className="w-3.5 h-3.5" />
-                  <span>Retake Exam</span>
+                  <span>Retake Level {exam.levelNumber} General Quiz Now</span>
                 </button>
               </div>
             )}
@@ -359,7 +400,7 @@ export const LevelExamModal: React.FC<LevelExamModalProps> = ({
                             Q{idx + 1}: {q.questionText}
                           </span>
                           <span
-                            className={`px-2 py-0.5 rounded font-mono text-[10px] font-bold ${
+                            className={`px-2 py-0.5 rounded font-mono text-[10px] font-bold shrink-0 ${
                               isCorrect
                                 ? 'bg-emerald-100 text-emerald-900'
                                 : 'bg-rose-100 text-rose-900'
@@ -400,7 +441,7 @@ export const LevelExamModal: React.FC<LevelExamModalProps> = ({
                 className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold rounded-lg flex items-center gap-1.5 cursor-pointer"
               >
                 <RotateCcw className="w-3.5 h-3.5" />
-                Retake Exam
+                Retake General Quiz (Unlimited Attempts)
               </button>
 
               <button
@@ -408,7 +449,7 @@ export const LevelExamModal: React.FC<LevelExamModalProps> = ({
                 onClick={onClose}
                 className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg cursor-pointer"
               >
-                Return to Dashboard
+                Close
               </button>
             </div>
           </div>
@@ -417,3 +458,4 @@ export const LevelExamModal: React.FC<LevelExamModalProps> = ({
     </div>
   );
 };
+

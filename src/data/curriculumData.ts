@@ -1,5 +1,6 @@
-import { Course, CurriculumLevel, ProjectBrief, QuizQuestion } from '../types/academy';
+import { Course, CurriculumLevel, ProjectBrief } from '../types/academy';
 import youtubeRecommendationsCache from './youtubeRecommendationsCache.json';
+import { createTopicAlignedLessonQuiz } from './moduleQuizzesData';
 
 function getDefaultLessonVideoId(lessonId: string): string | undefined {
   const entry = (youtubeRecommendationsCache as Record<string, any>)[lessonId];
@@ -353,255 +354,6 @@ Sadiq Lawal,Night,94,5.5,77,4.4`,
   },
 ];
 
-function createLevelQuiz(levelNum: number, moduleId: string, lessonId: string, title: string): {
-  id: string;
-  lessonId: string;
-  moduleId: string;
-  title: string;
-  passingScorePercent: number;
-  questions: QuizQuestion[];
-} {
-  const quizBankByLevel: Record<number, QuizQuestion[]> = {
-    1: [
-      {
-        id: `${lessonId}-q1`,
-        quizId: `quiz-${lessonId}`,
-        questionText: 'In Microsoft Excel, every formula or calculation you type into a cell must begin with which character?',
-        formulaContext: '=B2+C2',
-        options: ['The equals sign (=)', 'The plus sign (+)', 'The hash symbol (#)', 'The colon symbol (:)'],
-        correctOptionIndex: 0,
-        explanation:
-          'Starting a cell entry with the equals sign (=) tells Excel to evaluate the entry as a formula rather than plain text.',
-      },
-      {
-        id: `${lessonId}-q2`,
-        quizId: `quiz-${lessonId}`,
-        questionText: 'What does the cell range notation B2:B15 represent in an Excel worksheet?',
-        formulaContext: '=SUM(B2:B15)',
-        options: [
-          'All contiguous cells in Column B starting from row 2 through row 15',
-          'Only cell B2 and cell B15, excluding the cells in between',
-          'Column B divided by Column B15',
-          'A named workbook sheet reference',
-        ],
-        correctOptionIndex: 0,
-        explanation:
-          'The colon (:) is the range operator in Excel, referencing every cell between the top-left and bottom-right addresses inclusive.',
-      },
-      {
-        id: `${lessonId}-q3`,
-        quizId: `quiz-${lessonId}`,
-        questionText: 'Why should numbers used for calculations be formatted using Number or Currency formatting rather than typing currency symbols and commas manually as text?',
-        options: [
-          'Excel stores formatted numbers as numeric values so math functions like SUM and AVERAGE still work',
-          'Manual text strings calculate faster in PivotTables',
-          'Excel does not allow letters and numbers on the same worksheet',
-          'Formatting locks the workbook from being saved',
-        ],
-        correctOptionIndex: 0,
-        explanation:
-          'Number formatting changes only the visual display while preserving the underlying numeric value for mathematical calculations.',
-      },
-    ],
-    2: [
-      {
-        id: `${lessonId}-q1`,
-        quizId: `quiz-${lessonId}`,
-        questionText: 'You have a tax rate stored in cell E1 and want to multiply values in B2:B50 by E1 when copying the formula down. Which reference for E1 prevents the row number from shifting?',
-        formulaContext: '=B2*$E$1',
-        options: ['$E$1 (or E$1)', 'E1', '#E#1', '&E&1'],
-        correctOptionIndex: 0,
-        explanation:
-          'The dollar sign ($) locks the column and/or row reference so that copying the formula down rows keeps pointing to row 1.',
-      },
-      {
-        id: `${lessonId}-q2`,
-        quizId: `quiz-${lessonId}`,
-        questionText: 'Which function sums values in a range (e.g., D2:D100) only when multiple criteria are met across different columns (such as Region = "Lagos" AND Category = "Hardware")?',
-        formulaContext: '=SUMIFS(D2:D100, B2:B100, "Lagos", C2:C100, "Hardware")',
-        options: ['SUMIFS', 'SUMIF', 'COUNTIFS', 'AVERAGE'],
-        correctOptionIndex: 0,
-        explanation:
-          'SUMIFS calculates the sum of a numeric range filtered by one or more criteria ranges simultaneously.',
-      },
-      {
-        id: `${lessonId}-q3`,
-        quizId: `quiz-${lessonId}`,
-        questionText: 'What is a key advantage of XLOOKUP over the older VLOOKUP function in business reporting?',
-        formulaContext: '=XLOOKUP(A2, Customers!B:B, Customers!A:A, "Not Found")',
-        options: [
-          'XLOOKUP can look up values to the left or right, defaults to an exact match, and includes a built-in if_not_found argument',
-          'XLOOKUP works only on sorted ascending columns',
-          'XLOOKUP automatically deletes duplicate rows in the source table',
-          'XLOOKUP requires counting column index numbers manually',
-        ],
-        correctOptionIndex: 0,
-        explanation:
-          'XLOOKUP separates the lookup_array and return_array, defaults to exact match, and eliminates fragile column index numbers.',
-      },
-    ],
-    3: [
-      {
-        id: `${lessonId}-q1`,
-        quizId: `quiz-${lessonId}`,
-        questionText: 'Customer names imported from a CRM contain extra leading, trailing, and double spaces between words. Which Excel function removes those irregular spaces cleanly?',
-        formulaContext: '=TRIM(A2)',
-        options: ['TRIM', 'LEFT', 'LEN', 'CONCAT'],
-        correctOptionIndex: 0,
-        explanation:
-          'TRIM removes all leading and trailing spaces from text and reduces multiple internal spaces between words to a single space.',
-      },
-      {
-        id: `${lessonId}-q2`,
-        quizId: `quiz-${lessonId}`,
-        questionText: 'When you convert a standard cell range into an official Excel Table (Ctrl + T), what happens when new rows of data are pasted directly below the table?',
-        formulaContext: '=SUM(tbl_Sales[Revenue])',
-        options: [
-          'The Excel Table expands automatically, applying calculated column formulas and updating dependent PivotTables on refresh',
-          'Excel blocks new rows from being added below row 100',
-          'All formulas convert into static text values',
-          'The worksheet is locked against sorting and filtering',
-        ],
-        correctOptionIndex: 0,
-        explanation:
-          'Structured Excel Tables dynamically expand their range boundaries and propagate calculated column formulas to every new row.',
-      },
-      {
-        id: `${lessonId}-q3`,
-        quizId: `quiz-${lessonId}`,
-        questionText: 'In Power Query, why is every cleaning action recorded in the "Applied Steps" pane?',
-        options: [
-          'So the entire cleaning workflow can be re-run automatically with one click (Refresh) whenever new raw files arrive',
-          'To permanently overwrite the original source CSV file on disk',
-          'To limit the dataset to 50 rows',
-          'Because Power Query cannot sort text columns',
-        ],
-        correctOptionIndex: 0,
-        explanation:
-          'Power Query records a repeatable transformation recipe so you never have to repeat manual cleanup steps each month.',
-      },
-    ],
-    4: [
-      {
-        id: `${lessonId}-q1`,
-        quizId: `quiz-${lessonId}`,
-        questionText: 'In a PivotTable Field List, where should you drag a numeric column like "Net_Revenue" if you want to calculate total or average sales across categories?',
-        options: ['The Values area', 'The Filters area', 'The Rows area', 'The Slicer header'],
-        correctOptionIndex: 0,
-        explanation:
-          'The Values area aggregates fields using functions such as Sum, Count, or Average.',
-      },
-      {
-        id: `${lessonId}-q2`,
-        quizId: `quiz-${lessonId}`,
-        questionText: 'What is the correct formula to calculate Month-over-Month (MoM) percentage revenue growth when January revenue is in B2 and February revenue is in C2?',
-        formulaContext: '=(C2-B2)/B2',
-        options: ['=(C2-B2)/B2', '=(B2-C2)/C2', '=C2/B2', '=SUM(B2:C2)/100'],
-        correctOptionIndex: 0,
-        explanation:
-          'Percentage change is calculated as (New Value - Old Value) / Old Value, formatted as a percentage.',
-      },
-      {
-        id: `${lessonId}-q3`,
-        quizId: `quiz-${lessonId}`,
-        questionText: 'After updating values or adding rows in the source Excel Table, what must you do so your PivotTable reflects the latest numbers?',
-        options: [
-          'Right-click the PivotTable and click Refresh (or Data > Refresh All)',
-          'Delete and rebuild the PivotTable from scratch',
-          'Re-type the numbers directly inside the PivotTable cells',
-          'Save the workbook as a PDF file',
-        ],
-        correctOptionIndex: 0,
-        explanation:
-          'PivotTables use a memory cache for speed; clicking Refresh updates the cache from the underlying source table.',
-      },
-    ],
-    5: [
-      {
-        id: `${lessonId}-q1`,
-        quizId: `quiz-${lessonId}`,
-        questionText: 'You have three PivotCharts on an executive dashboard and want a single "Region" Slicer to filter all three charts at the same time. Which setting connects the Slicer to all three PivotTables?',
-        options: [
-          'Report Connections (or Filter Connections) in the Slicer tab',
-          'Conditional Formatting > Manage Rules',
-          'Text to Columns wizard',
-          'Page Layout > Print Area',
-        ],
-        correctOptionIndex: 0,
-        explanation:
-          'Report Connections lets you check multiple PivotTables that share the same data cache so one Slicer controls them all.',
-      },
-      {
-        id: `${lessonId}-q2`,
-        quizId: `quiz-${lessonId}`,
-        questionText: 'Which chart type is best suited for showing continuous monthly revenue trends over a 24-month period?',
-        options: [
-          'A clean Line Chart with a consistent time axis',
-          'A 3D Exploded Pie Chart with 24 slices',
-          'A Doughnut Chart',
-          'A Radar Chart',
-        ],
-        correctOptionIndex: 0,
-        explanation:
-          'Line charts clearly display continuous trends, seasonality, and inflection points over time without visual distortion.',
-      },
-      {
-        id: `${lessonId}-q3`,
-        quizId: `quiz-${lessonId}`,
-        questionText: 'Why should an executive KPI card display both the headline metric (e.g., ₦48.15M Revenue) and a comparison benchmark (e.g., +7.0% vs Target)?',
-        options: [
-          'A raw number without a target or prior-period comparison lacks context for decision-making',
-          'Excel requires two numbers inside every text box',
-          'To fill empty space on the worksheet',
-          'Because PivotTables cannot calculate sums without percentages',
-        ],
-        correctOptionIndex: 0,
-        explanation:
-          'Decision-makers need context (vs. budget or vs. prior period) to know whether a metric represents strong or weak performance.',
-      },
-    ],
-    6: [
-      {
-        id: `${lessonId}-q1`,
-        quizId: `quiz-${lessonId}`,
-        questionText: 'When structuring a professional multi-sheet analysis workbook, why is it best practice to keep Raw Data, Clean Table, Pivot Engine, and Dashboard on separate worksheets?',
-        options: [
-          'It protects source integrity, prevents accidental overwrites, and keeps the presentation layer clean and auditable',
-          'Excel only allows one table per workbook unless sheets are separated',
-          'It prevents formulas from recalculating',
-          'Slicers only work on the fourth worksheet',
-        ],
-        correctOptionIndex: 0,
-        explanation:
-          'Separating raw data, transformation logic, aggregation engines, and presentation views ensures maintainability and auditability.',
-      },
-      {
-        id: `${lessonId}-q2`,
-        quizId: `quiz-${lessonId}`,
-        questionText: 'Before presenting findings from a cleaned dataset to stakeholders, what reconciliation check should an analyst always perform?',
-        options: [
-          'Verify that total revenue and row counts in the PivotTables match the control totals in the cleaned data table',
-          'Change all formulas to static pasted text so nobody can inspect them',
-          'Hide rows that show negative budget variances',
-          'Sort all months alphabetically instead of chronologically',
-        ],
-        correctOptionIndex: 0,
-        explanation:
-          'Reconciling summary totals against source control totals ensures filters, joins, or duplicate removals did not distort the report.',
-      },
-    ],
-  };
-
-  return {
-    id: `quiz-${lessonId}`,
-    lessonId,
-    moduleId,
-    title: `${title} — Skill Check`,
-    passingScorePercent: 67,
-    questions: quizBankByLevel[levelNum] || quizBankByLevel[1],
-  };
-}
-
 function buildLevelModules(
   levelNumber: number,
   moduleTitles: string[],
@@ -621,7 +373,7 @@ function buildLevelModules(
       levelNumber,
       orderIndex: modOrder,
       title: modTitle,
-      summary: `Step-by-step practical training on ${modTitle.toLowerCase()} with downloadable Excel practice exercises.`,
+      summary: `Step-by-step practical training on ${modTitle.toLowerCase()} paired with a video-aligned topic quiz.`,
       lessons: [
         {
           id: lesson1Id,
@@ -629,7 +381,7 @@ function buildLevelModules(
           levelNumber,
           orderIndex: 1,
           title: `${modTitle}: Core Concepts & Walkthrough`,
-          description: `Learn the exact workflow for ${modTitle.toLowerCase()} in Microsoft Excel. We walk through real business examples, keyboard shortcuts, and common beginner mistakes to avoid.`,
+          description: `Learn the exact workflow for ${modTitle.toLowerCase()} in Microsoft Excel. Watch the tutorial and take the 3-question topic quiz to test your understanding.`,
           durationMinutes: 14 + ((levelNumber + modOrder) % 9),
           isFreePreview: isFree,
           youtubeVideoId: getDefaultLessonVideoId(lesson1Id),
@@ -637,7 +389,7 @@ function buildLevelModules(
           conceptSummary: [
             `Understand why ${modTitle.toLowerCase()} matters in day-to-day business reporting.`,
             'Follow step-by-step cell selection, formula bar inspection, and formatting standards.',
-            'Verify accuracy using built-in Excel status bar checks and reconciliation totals.',
+            'Pass the Lesson Quiz (unlimited retakes) to verify mastery of this video topic.',
           ],
           demoSpreadsheetHeaders: defaultHeaders,
           demoSpreadsheetRows: defaultRows,
@@ -645,16 +397,16 @@ function buildLevelModules(
             id: `res-${lesson1Id}`,
             lessonId: lesson1Id,
             fileName: `L${levelNumber}_M${modOrder}_Practice_Workbook.csv`,
-            fileDescription: `Demonstration practice dataset for ${modTitle}. Open in Microsoft Excel to follow along with the video lesson.`,
+            fileDescription: `Optional reference dataset for ${modTitle}.`,
             fileFormat: 'XLSX Template (CSV Demo)',
-            assignmentInstructions: `Open the practice file in Excel, complete the exercises for "${modTitle}", verify your control totals match the expected outcome, and mark this lesson complete.`,
-            expectedOutcome: `A cleanly structured worksheet applying ${modTitle.toLowerCase()} with zero #VALUE! or #REF! errors.`,
+            assignmentInstructions: `Watch the video tutorial for "${modTitle}" and complete the 3-question Lesson Quiz below to unlock the next lesson.`,
+            expectedOutcome: `Passed topic quiz on ${modTitle.toLowerCase()} (67%+ score, unlimited retakes allowed).`,
             sampleCsvContent: [
               defaultHeaders.join(','),
               ...defaultRows.map((r) => r.cells.join(',')),
             ].join('\n'),
           },
-          quiz: createLevelQuiz(levelNumber, moduleId, lesson1Id, modTitle),
+          quiz: createTopicAlignedLessonQuiz(levelNumber, moduleId, lesson1Id, modTitle, false),
         },
         {
           id: lesson2Id,
@@ -662,7 +414,7 @@ function buildLevelModules(
           levelNumber,
           orderIndex: 2,
           title: `${modTitle}: Hands-On Business Lab`,
-          description: `Apply ${modTitle.toLowerCase()} to a realistic business scenario. Practice building, checking, and formatting your solution from scratch.`,
+          description: `Apply ${modTitle.toLowerCase()} to realistic business scenarios and test your applied knowledge with the module quiz.`,
           durationMinutes: 18 + ((levelNumber * 2 + modOrder) % 8),
           isFreePreview: levelNumber === 1 && modOrder === 1,
           youtubeVideoId: getDefaultLessonVideoId(lesson2Id),
@@ -670,7 +422,7 @@ function buildLevelModules(
           conceptSummary: [
             'Translate a business request into structured rows, columns, and formulas.',
             'Test edge cases such as blank cells, zero values, or new data rows.',
-            'Format the final output so a manager or client can read it immediately.',
+            'Pass the applied module quiz (unlimited retakes) to progress through the level.',
           ],
           demoSpreadsheetHeaders: defaultHeaders,
           demoSpreadsheetRows: defaultRows,
@@ -678,16 +430,16 @@ function buildLevelModules(
             id: `res-${lesson2Id}`,
             lessonId: lesson2Id,
             fileName: `L${levelNumber}_M${modOrder}_HandsOn_Lab.csv`,
-            fileDescription: `Hands-on lab dataset for ${modTitle} practical exercise.`,
+            fileDescription: `Optional reference dataset for ${modTitle} practical scenario.`,
             fileFormat: 'CSV Raw Dataset',
-            assignmentInstructions: `Complete the hands-on lab challenge independently, then compare your formula structure and totals against the lesson walkthrough.`,
-            expectedOutcome: `Completed business exercise demonstrating mastery of ${modTitle.toLowerCase()}.`,
+            assignmentInstructions: `Watch the applied tutorial for "${modTitle}" and pass the 3-question Module Quiz below (retake as many times as needed).`,
+            expectedOutcome: `Completed module quiz demonstrating mastery of ${modTitle.toLowerCase()}.`,
             sampleCsvContent: [
               defaultHeaders.join(','),
               ...defaultRows.map((r) => r.cells.join(',')),
             ].join('\n'),
           },
-          quiz: createLevelQuiz(levelNumber, moduleId, lesson2Id, `${modTitle} Lab`),
+          quiz: createTopicAlignedLessonQuiz(levelNumber, moduleId, lesson2Id, modTitle, true),
         },
       ],
     };

@@ -8,8 +8,10 @@ import {
   Check,
   FileSpreadsheet,
   Lock,
+  Award,
+  RotateCcw,
 } from 'lucide-react';
-import { CurriculumLevel } from '../types/academy';
+import { CurriculumLevel, QuizAttempt } from '../types/academy';
 import { LEVEL_6_PROJECTS } from '../data/curriculumData';
 import { downloadDemoCsvFile } from '../utils/downloadCsv';
 import { downloadStarterWorkbook } from '../utils/excelWorkbookGenerator';
@@ -19,10 +21,12 @@ interface CurriculumViewProps {
   selectedLevelFilter: number | 'all';
   onChangeLevelFilter: (level: number | 'all') => void;
   completedLessonIds: string[];
+  quizAttempts?: QuizAttempt[];
   isAuthenticated: boolean;
   isPurchased?: boolean;
   isInstructor?: boolean;
   onStartLesson: (lessonId: string) => void;
+  onOpenLevelExam?: (levelNumber: number) => void;
   onRequireAuth: () => void;
   onOpenCheckout: () => void;
 }
@@ -32,10 +36,12 @@ export const CurriculumView: React.FC<CurriculumViewProps> = ({
   selectedLevelFilter,
   onChangeLevelFilter,
   completedLessonIds,
+  quizAttempts = [],
   isAuthenticated,
   isPurchased = false,
   isInstructor = false,
   onStartLesson,
+  onOpenLevelExam,
   onRequireAuth,
   onOpenCheckout,
 }) => {
@@ -61,6 +67,19 @@ export const CurriculumView: React.FC<CurriculumViewProps> = ({
         .forEach((les) => allOrderedLessonIds.push(les.id));
     });
   });
+
+  const hasPassedLevelGeneralQuiz = (lvlNum: number) => {
+    if (isInstructor) return true;
+    return quizAttempts.some(
+      (att) => att.quizId === `exam-lvl-${lvlNum}` && att.passed
+    );
+  };
+
+  const getBestLevelExamScore = (lvlNum: number): number | null => {
+    const attempts = quizAttempts.filter((att) => att.quizId === `exam-lvl-${lvlNum}`);
+    if (attempts.length === 0) return null;
+    return Math.max(...attempts.map((a) => a.scorePercent));
+  };
 
   const toggleModule = (modId: string) => {
     setExpandedModuleIds((prev) =>
@@ -105,7 +124,7 @@ export const CurriculumView: React.FC<CurriculumViewProps> = ({
         <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6">
           <div className="space-y-2 max-w-3xl">
             <div className="text-xs font-medium text-emerald-800 flex items-center gap-2">
-              <span>Complete 6-Level Syllabus · 54 Modules · 108 Guided Video Lessons & Labs</span>
+              <span>Complete 6-Level Syllabus · 54 Modules · 108 Video-Aligned Quizzes & 6 General Quizzes</span>
               {isInstructor && (
                 <span className="px-2 py-0.5 rounded bg-emerald-800 text-white font-mono text-[10px] font-bold">
                   INSTRUCTOR FULL UNRESTRICTED ACCESS
@@ -117,10 +136,10 @@ export const CurriculumView: React.FC<CurriculumViewProps> = ({
             </h1>
             <p className="text-sm sm:text-base text-slate-600 leading-relaxed">
               {isInstructor
-                ? 'Lead Instructor Okoro Tochuwku: You have full, unrestricted access to all 6 levels and all exercises. Click any lesson to launch it immediately.'
+                ? 'Lead Instructor Okoro Tochuwku: You have full, unrestricted access to all 6 levels, lesson quizzes, and End-of-Level General Quizzes. Click any lesson or quiz to launch it immediately.'
                 : isAuthenticated
-                ? 'Level 1 is free for all registered learners. Enrol in the Full Academy to unlock Levels 2–6. Within unlocked levels, complete each exercise before moving on to the next.'
-                : 'Level 1 is free for all students upon sign up. Enrol anytime for lifetime access to Levels 2–6.'}
+                ? 'Each lesson includes a video-aligned quiz (unlimited retakes), and each Level concludes with a 10-question General Quiz (70% pass, unlimited retakes) required to unlock the next Level.'
+                : 'Level 1 is free for all students upon sign up. Complete each module quiz and pass the End-of-Level General Quiz (unlimited retakes) to advance through all 6 levels.'}
             </p>
           </div>
 
@@ -227,216 +246,362 @@ export const CurriculumView: React.FC<CurriculumViewProps> = ({
         </div>
       ) : (
         <div className="space-y-10">
-          {filteredLevels.map((level) => (
-            <section
-              key={level.levelNumber}
-              className="bg-white border border-slate-200 rounded-xl overflow-hidden"
-            >
-              {/* Level Banner */}
-              <div className="bg-slate-900 text-white p-6 lg:p-8 space-y-3">
-                <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-emerald-400">
-                  <span>LEVEL 0{level.levelNumber} OF 06</span>
-                  <span>
-                    {level.modules.length} Modules · Practical Outcome Included
-                  </span>
-                </div>
-                <h2 className="text-2xl font-bold">{level.title}</h2>
-                <p className="text-sm text-slate-300 max-w-3xl leading-relaxed">{level.goal} {level.shortDescription}</p>
-                <div className="pt-2 text-xs text-slate-300">
-                  <span className="font-semibold text-amber-300">Level Practical Outcome: </span>
-                  {level.practicalOutcome}
-                </div>
-              </div>
+          {filteredLevels.map((level) => {
+            const isPrevLevelQuizMissing =
+              !isInstructor &&
+              level.levelNumber > 1 &&
+              !hasPassedLevelGeneralQuiz(level.levelNumber - 1);
+            const isCurrentLevelQuizPassed = hasPassedLevelGeneralQuiz(level.levelNumber);
+            const bestLevelScore = getBestLevelExamScore(level.levelNumber);
 
-              {/* Modules Accordion List */}
-              <div className="divide-y divide-slate-200">
-                {level.modules.map((mod) => {
-                  const isExpanded = expandedModuleIds.includes(mod.id);
-                  const completedInMod = mod.lessons.filter((l) =>
-                    completedLessonIds.includes(l.id)
-                  ).length;
+            const fullLevelObj = levels.find((l) => l.levelNumber === level.levelNumber) || level;
+            const allLevelLessonIds = fullLevelObj.modules.flatMap((m) =>
+              m.lessons.map((les) => les.id)
+            );
+            const completedInLevelCount = allLevelLessonIds.filter((id) =>
+              completedLessonIds.includes(id)
+            ).length;
+
+            return (
+              <section
+                key={level.levelNumber}
+                className="bg-white border border-slate-200 rounded-xl overflow-hidden"
+              >
+                {/* Level Banner */}
+                <div className="bg-slate-900 text-white p-6 lg:p-8 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-emerald-400">
+                    <span>LEVEL 0{level.levelNumber} OF 06</span>
+                    <span>
+                      {level.modules.length} Modules · Video-Aligned Lesson Quizzes + End-of-Level General Quiz
+                    </span>
+                  </div>
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    <div className="space-y-2">
+                      <h2 className="text-2xl font-bold">{level.title}</h2>
+                      <p className="text-sm text-slate-300 max-w-3xl leading-relaxed">
+                        {level.goal} {level.shortDescription}
+                      </p>
+                    </div>
+                    {isCurrentLevelQuizPassed && (
+                      <div className="px-3.5 py-2 rounded-lg bg-emerald-900/80 border border-emerald-600 text-emerald-200 text-xs font-bold flex items-center gap-2 shrink-0 self-start">
+                        <Award className="w-4 h-4 text-amber-300 shrink-0" />
+                        <span>
+                          Level {level.levelNumber} General Quiz Passed
+                          {bestLevelScore !== null ? ` (${bestLevelScore}%)` : ''}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                  <div className="pt-2 text-xs text-slate-300">
+                    <span className="font-semibold text-amber-300">Level Practical Outcome: </span>
+                    {level.practicalOutcome}
+                  </div>
+                </div>
+
+                {/* Modules Accordion List */}
+                <div className="divide-y divide-slate-200">
+                  {level.modules.map((mod) => {
+                    const isExpanded = expandedModuleIds.includes(mod.id);
+                    const completedInMod = mod.lessons.filter((l) =>
+                      completedLessonIds.includes(l.id)
+                    ).length;
+
+                    return (
+                      <div key={mod.id} className="bg-white">
+                        <button
+                          type="button"
+                          onClick={() => toggleModule(mod.id)}
+                          className="w-full px-6 py-4 text-left flex items-center justify-between gap-4 hover:bg-slate-50 transition-colors cursor-pointer"
+                        >
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2 text-xs text-slate-500 font-mono">
+                              <span>
+                                Module {level.levelNumber}.{mod.orderIndex}
+                              </span>
+                              <span aria-hidden="true">·</span>
+                              <span>{mod.lessons.length} Lessons & Video Quizzes</span>
+                              <span aria-hidden="true">·</span>
+                              <span>
+                                {isAuthenticated
+                                  ? `${completedInMod}/${mod.lessons.length} Completed`
+                                  : 'Syllabus Preview'}
+                              </span>
+                            </div>
+                            <div className="text-base font-semibold text-slate-900">{mod.title}</div>
+                          </div>
+
+                          <div className="flex items-center gap-3 shrink-0">
+                            <span className="text-xs text-slate-500 hidden sm:inline">
+                              {isExpanded ? 'Hide Lessons' : 'Show Lessons'}
+                            </span>
+                            {isExpanded ? (
+                              <ChevronUp className="w-4 h-4 text-slate-500" />
+                            ) : (
+                              <ChevronDown className="w-4 h-4 text-slate-500" />
+                            )}
+                          </div>
+                        </button>
+
+                        {isExpanded && (
+                          <div className="bg-[#FAF9F5] border-t border-slate-200 px-6 py-4 space-y-3">
+                            {mod.lessons.map((lesson) => {
+                              const isDone = isAuthenticated && completedLessonIds.includes(lesson.id);
+                              const isLevelLocked = level.levelNumber > 1 && !isPurchased && !isInstructor;
+                              const lesIdx = allOrderedLessonIds.indexOf(lesson.id);
+                              const isSeqLocked =
+                                !isInstructor &&
+                                lesIdx > 0 &&
+                                !completedLessonIds.includes(allOrderedLessonIds[lesIdx - 1]);
+
+                              return (
+                                <div
+                                  key={lesson.id}
+                                  className={`bg-white border rounded-lg p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 transition-colors ${
+                                    isLevelLocked || isPrevLevelQuizMissing || isSeqLocked
+                                      ? 'border-amber-200/80 bg-amber-50/20'
+                                      : 'border-slate-200'
+                                  }`}
+                                >
+                                  <div className="space-y-1.5">
+                                    <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 font-mono tabular-nums">
+                                      <span>
+                                        Lesson {mod.orderIndex}.{lesson.orderIndex}
+                                      </span>
+                                      <span aria-hidden="true">·</span>
+                                      <span>{lesson.durationMinutes} min</span>
+                                      <span aria-hidden="true">·</span>
+                                      <span>3-Question Video Quiz</span>
+                                      <span aria-hidden="true">·</span>
+                                      {isLevelLocked ? (
+                                        <span className="text-amber-800 font-bold flex items-center gap-1">
+                                          <Lock className="w-3 h-3 text-amber-700" />
+                                          <span>Level {level.levelNumber} Enrolment Required</span>
+                                        </span>
+                                      ) : isPrevLevelQuizMissing ? (
+                                        <span className="text-amber-800 font-bold flex items-center gap-1">
+                                          <Lock className="w-3 h-3 text-amber-700" />
+                                          <span>
+                                            Locked · Pass Level {level.levelNumber - 1} General Quiz First
+                                          </span>
+                                        </span>
+                                      ) : isSeqLocked ? (
+                                        <span className="text-amber-800 font-bold flex items-center gap-1">
+                                          <Lock className="w-3 h-3 text-amber-700" />
+                                          <span>Locked · Pass Previous Lesson Quiz First</span>
+                                        </span>
+                                      ) : (
+                                        <span
+                                          className={
+                                            level.levelNumber === 1
+                                              ? 'text-emerald-800 font-bold'
+                                              : 'text-slate-700'
+                                          }
+                                        >
+                                          {level.levelNumber === 1 ? 'Free Level 1 Starter' : 'Unlocked Lesson'}
+                                        </span>
+                                      )}
+                                      {isDone && (
+                                        <>
+                                          <span aria-hidden="true">·</span>
+                                          <span className="text-emerald-800 font-semibold">✓ Quiz Passed</span>
+                                        </>
+                                      )}
+                                    </div>
+
+                                    <h4 className="text-sm font-bold text-slate-900">{lesson.title}</h4>
+                                    <p className="text-xs text-slate-600 leading-relaxed max-w-2xl">
+                                      {lesson.description}
+                                    </p>
+
+                                    <div className="pt-1 flex flex-wrap items-center gap-2 text-[11px] font-mono text-slate-600">
+                                      <span className="text-slate-400">Formulas:</span>
+                                      {lesson.keyFormulas.slice(0, 2).map((f) => (
+                                        <code
+                                          key={f}
+                                          className="bg-slate-100 px-2 py-0.5 rounded border border-slate-200 text-slate-800"
+                                        >
+                                          {f}
+                                        </code>
+                                      ))}
+                                      <span aria-hidden="true">·</span>
+                                      <span>Workbook: {lesson.resource.fileName}</span>
+                                    </div>
+                                  </div>
+
+                                  <div className="flex items-center gap-2.5 shrink-0">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (!isAuthenticated) {
+                                          onRequireAuth();
+                                          return;
+                                        }
+                                        downloadStarterWorkbook(lesson, level.title);
+                                      }}
+                                      className="px-3 py-2 text-xs font-medium text-slate-700 bg-slate-100 rounded-lg hover:bg-slate-200 transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
+                                      title="Download practice Excel workbook (.xlsx)"
+                                    >
+                                      {isAuthenticated ? (
+                                        <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-800" />
+                                      ) : (
+                                        <Lock className="w-3.5 h-3.5 text-slate-500" />
+                                      )}
+                                      {isAuthenticated ? 'Practice .XLSX' : 'Log in for .XLSX'}
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (isLevelLocked) {
+                                          onOpenCheckout();
+                                        } else {
+                                          onStartLesson(lesson.id);
+                                        }
+                                      }}
+                                      className={`px-4 py-2 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer ${
+                                        isLevelLocked || isPrevLevelQuizMissing
+                                          ? 'bg-amber-100 text-amber-950 border border-amber-300 hover:bg-amber-200'
+                                          : isSeqLocked
+                                          ? 'bg-slate-200 text-slate-800 border border-slate-300 hover:bg-slate-300'
+                                          : 'bg-slate-900 text-white hover:bg-emerald-800'
+                                      }`}
+                                    >
+                                      {!isAuthenticated ? (
+                                        <>
+                                          <Lock className="w-3.5 h-3.5" />
+                                          Log in to Start Level 1
+                                        </>
+                                      ) : isLevelLocked ? (
+                                        <>
+                                          <Lock className="w-3.5 h-3.5 text-amber-800" />
+                                          Enrol to Unlock Level {level.levelNumber}
+                                        </>
+                                      ) : isPrevLevelQuizMissing ? (
+                                        <>
+                                          <Lock className="w-3.5 h-3.5 text-amber-800" />
+                                          Pass Level {level.levelNumber - 1} Exam First
+                                        </>
+                                      ) : isSeqLocked ? (
+                                        <>
+                                          <Lock className="w-3.5 h-3.5 text-slate-600" />
+                                          Pass Previous Lesson Quiz First
+                                        </>
+                                      ) : (
+                                        <>
+                                          <Play className="w-3.5 h-3.5" />
+                                          Start Lesson & Quiz
+                                        </>
+                                      )}
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* End-of-Level General Quiz Card */}
+                {(() => {
+                  const isAllLevelLessonsCompleted =
+                    allLevelLessonIds.length > 0 &&
+                    completedInLevelCount >= allLevelLessonIds.length;
+                  const canTakeThisLevelExam =
+                    isInstructor ||
+                    isCurrentLevelQuizPassed ||
+                    (isAuthenticated &&
+                      !isPrevLevelQuizMissing &&
+                      isAllLevelLessonsCompleted);
 
                   return (
-                    <div key={mod.id} className="bg-white">
-                      <button
-                        type="button"
-                        onClick={() => toggleModule(mod.id)}
-                        className="w-full px-6 py-4 text-left flex items-center justify-between gap-4 hover:bg-slate-50 transition-colors cursor-pointer"
-                      >
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-2 text-xs text-slate-500 font-mono">
-                            <span>
-                              Module {level.levelNumber}.{mod.orderIndex}
-                            </span>
-                            <span aria-hidden="true">·</span>
-                            <span>{mod.lessons.length} Lessons</span>
-                            <span aria-hidden="true">·</span>
-                            <span>
-                              {isAuthenticated
-                                ? `${completedInMod}/${mod.lessons.length} Completed`
-                                : 'Syllabus Preview'}
-                            </span>
-                          </div>
-                          <div className="text-base font-semibold text-slate-900">{mod.title}</div>
-                        </div>
-
-                        <div className="flex items-center gap-3 shrink-0">
-                          <span className="text-xs text-slate-500 hidden sm:inline">
-                            {isExpanded ? 'Hide Lessons' : 'Show Lessons'}
+                    <div className="p-6 bg-emerald-950 text-white border-t border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-5">
+                      <div className="space-y-1.5 max-w-2xl">
+                        <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono text-amber-300 uppercase tracking-wider">
+                          <Award className="w-4 h-4" />
+                          <span>
+                            END OF LEVEL 0{level.levelNumber} FINAL EXAM · 10 QUESTIONS · 70% TO PASS · UNLIMITED RETAKES
                           </span>
-                          {isExpanded ? (
-                            <ChevronUp className="w-4 h-4 text-slate-500" />
-                          ) : (
-                            <ChevronDown className="w-4 h-4 text-slate-500" />
-                          )}
                         </div>
-                      </button>
-
-                      {isExpanded && (
-                        <div className="bg-[#FAF9F5] border-t border-slate-200 px-6 py-4 space-y-3">
-                          {mod.lessons.map((lesson) => {
-                            const isDone = isAuthenticated && completedLessonIds.includes(lesson.id);
-                            const isLevelLocked = level.levelNumber > 1 && !isPurchased && !isInstructor;
-                            const lesIdx = allOrderedLessonIds.indexOf(lesson.id);
-                            const isSeqLocked =
-                              !isInstructor &&
-                              lesIdx > 0 &&
-                              !completedLessonIds.includes(allOrderedLessonIds[lesIdx - 1]);
-
-                            return (
-                              <div
-                                key={lesson.id}
-                                className={`bg-white border rounded-lg p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 transition-colors ${
-                                  isLevelLocked || isSeqLocked ? 'border-amber-200/80 bg-amber-50/20' : 'border-slate-200'
-                                }`}
-                              >
-                                <div className="space-y-1.5">
-                                  <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 font-mono tabular-nums">
-                                    <span>
-                                      Lesson {mod.orderIndex}.{lesson.orderIndex}
-                                    </span>
-                                    <span aria-hidden="true">·</span>
-                                    <span>{lesson.durationMinutes} min</span>
-                                    <span aria-hidden="true">·</span>
-                                    {isLevelLocked ? (
-                                      <span className="text-amber-800 font-bold flex items-center gap-1">
-                                        <Lock className="w-3 h-3 text-amber-700" />
-                                        <span>Level {level.levelNumber} Enrolment Required</span>
-                                      </span>
-                                    ) : isSeqLocked ? (
-                                      <span className="text-amber-800 font-bold flex items-center gap-1">
-                                        <Lock className="w-3 h-3 text-amber-700" />
-                                        <span>Locked · Complete Previous Exercise First</span>
-                                      </span>
-                                    ) : (
-                                      <span
-                                        className={
-                                          level.levelNumber === 1
-                                            ? 'text-emerald-800 font-bold'
-                                            : 'text-slate-700'
-                                        }
-                                      >
-                                        {level.levelNumber === 1 ? 'Free Level 1 Starter' : 'Unlocked Lesson'}
-                                      </span>
-                                    )}
-                                    {isDone && (
-                                      <>
-                                        <span aria-hidden="true">·</span>
-                                        <span className="text-emerald-800 font-semibold">✓ Completed</span>
-                                      </>
-                                    )}
-                                  </div>
-
-                                  <h4 className="text-sm font-bold text-slate-900">{lesson.title}</h4>
-                                  <p className="text-xs text-slate-600 leading-relaxed max-w-2xl">
-                                    {lesson.description}
-                                  </p>
-
-                                  <div className="pt-1 flex flex-wrap items-center gap-2 text-[11px] font-mono text-slate-600">
-                                    <span className="text-slate-400">Formulas:</span>
-                                    {lesson.keyFormulas.slice(0, 2).map((f) => (
-                                      <code
-                                        key={f}
-                                        className="bg-slate-100 px-2 py-0.5 rounded border border-slate-200 text-slate-800"
-                                      >
-                                        {f}
-                                      </code>
-                                    ))}
-                                    <span aria-hidden="true">·</span>
-                                    <span>Workbook: {lesson.resource.fileName}</span>
-                                  </div>
-                                </div>
-
-                                <div className="flex items-center gap-2.5 shrink-0">
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      if (!isAuthenticated) {
-                                        onRequireAuth();
-                                        return;
-                                      }
-                                      downloadStarterWorkbook(lesson, level.title);
-                                    }}
-                                    className="px-3 py-2 text-xs font-medium text-slate-700 bg-slate-100 rounded-lg hover:bg-slate-200 transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
-                                    title="Download practice Excel workbook (.xlsx)"
-                                  >
-                                    {isAuthenticated ? (
-                                      <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-800" />
-                                    ) : (
-                                      <Lock className="w-3.5 h-3.5 text-slate-500" />
-                                    )}
-                                    {isAuthenticated ? 'Practice .XLSX' : 'Log in for .XLSX'}
-                                  </button>
-
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      if (isLevelLocked) {
-                                        onOpenCheckout();
-                                      } else {
-                                        onStartLesson(lesson.id);
-                                      }
-                                    }}
-                                    className={`px-4 py-2 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer ${
-                                      isLevelLocked
-                                        ? 'bg-amber-100 text-amber-950 border border-amber-300 hover:bg-amber-200'
-                                        : isSeqLocked
-                                        ? 'bg-slate-200 text-slate-800 border border-slate-300 hover:bg-slate-300'
-                                        : 'bg-slate-900 text-white hover:bg-emerald-800'
-                                    }`}
-                                  >
-                                    {!isAuthenticated ? (
-                                      <>
-                                        <Lock className="w-3.5 h-3.5" />
-                                        Log in to Start Level 1
-                                      </>
-                                    ) : isLevelLocked ? (
-                                      <>
-                                        <Lock className="w-3.5 h-3.5 text-amber-800" />
-                                        Enrol to Unlock Level {level.levelNumber}
-                                      </>
-                                    ) : isSeqLocked ? (
-                                      <>
-                                        <Lock className="w-3.5 h-3.5 text-slate-600" />
-                                        Complete Previous Exercise First
-                                      </>
-                                    ) : (
-                                      <>
-                                        <Play className="w-3.5 h-3.5" />
-                                        Start Lesson
-                                      </>
-                                    )}
-                                  </button>
-                                </div>
-                              </div>
-                            );
-                          })}
+                        <h3 className="text-lg font-bold text-white">
+                          Level {level.levelNumber} Final Exam &amp; Assessment
+                        </h3>
+                        <p className="text-xs text-slate-300 leading-relaxed">
+                          {level.levelNumber < 6
+                            ? `Complete all modules in Level ${level.levelNumber} first, then pass this 10-question Final Exam (70%+) to unlock Level ${level.levelNumber + 1}.`
+                            : 'Complete all modules in Level 6 first, then pass this 10-question Final Exam to unlock the 4 Final Practice Projects on the Project page.'}
+                        </p>
+                        <div className="text-[11px] font-mono text-emerald-300 pt-1">
+                          Level Module Progress: {completedInLevelCount}/{allLevelLessonIds.length} Lessons Completed
+                          {bestLevelScore !== null ? ` · Best Exam Score: ${bestLevelScore}%` : ''}
                         </div>
-                      )}
+                      </div>
+
+                      <div className="flex items-center gap-3 shrink-0">
+                        {!isAuthenticated ? (
+                          <button
+                            type="button"
+                            onClick={() => onRequireAuth()}
+                            className="px-5 py-3 rounded-lg text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 flex items-center gap-2 transition-colors cursor-pointer"
+                          >
+                            <Lock className="w-4 h-4 text-amber-300" />
+                            <span>Log in to Unlock Level {level.levelNumber} Exam</span>
+                          </button>
+                        ) : level.levelNumber > 1 && !isPurchased && !isInstructor ? (
+                          <button
+                            type="button"
+                            onClick={() => onOpenCheckout()}
+                            className="px-5 py-3 rounded-lg text-xs font-bold bg-amber-400 hover:bg-amber-300 text-slate-950 flex items-center gap-2 transition-colors cursor-pointer"
+                          >
+                            <Lock className="w-4 h-4" />
+                            <span>Enrol to Unlock Level {level.levelNumber} Exam</span>
+                          </button>
+                        ) : canTakeThisLevelExam ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (onOpenLevelExam) {
+                                onOpenLevelExam(level.levelNumber);
+                              }
+                            }}
+                            className={`px-5 py-3 rounded-lg text-xs font-bold flex items-center gap-2 transition-colors cursor-pointer ${
+                              isCurrentLevelQuizPassed
+                                ? 'bg-emerald-700 hover:bg-emerald-600 text-white border border-emerald-500'
+                                : 'bg-amber-400 hover:bg-amber-300 text-slate-950'
+                            }`}
+                          >
+                            {isCurrentLevelQuizPassed ? (
+                              <>
+                                <RotateCcw className="w-4 h-4" />
+                                <span>Retake Level {level.levelNumber} Final Exam</span>
+                              </>
+                            ) : (
+                              <>
+                                <Award className="w-4 h-4" />
+                                <span>Take Level {level.levelNumber} Final Exam</span>
+                              </>
+                            )}
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            disabled
+                            className="px-5 py-3 rounded-lg text-xs font-bold bg-slate-800/90 text-slate-400 border border-slate-700 flex items-center gap-2 cursor-not-allowed"
+                          >
+                            <Lock className="w-4 h-4 text-amber-400 shrink-0" />
+                            <span>
+                              {isPrevLevelQuizMissing
+                                ? `Locked · Pass Level ${level.levelNumber - 1} Exam First`
+                                : `Locked · Complete Modules First (${completedInLevelCount}/${allLevelLessonIds.length})`}
+                            </span>
+                          </button>
+                        )}
+                      </div>
                     </div>
                   );
-                })}
-              </div>
+                })()}
 
               {/* Level 6 Detailed Real-World Data Analysis Projects Specifications */}
               {level.levelNumber === 6 && (
@@ -583,8 +748,9 @@ export const CurriculumView: React.FC<CurriculumViewProps> = ({
                   </div>
                 </div>
               )}
-            </section>
-          ))}
+              </section>
+            );
+          })}
         </div>
       )}
     </div>

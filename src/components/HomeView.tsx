@@ -669,15 +669,6 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 <li>
                   <button
                     type="button"
-                    onClick={() => onNavigate('playground')}
-                    className="hover:text-amber-300 transition-colors cursor-pointer"
-                  >
-                    Formula Playground (Live)
-                  </button>
-                </li>
-                <li>
-                  <button
-                    type="button"
                     onClick={() => onNavigate('shortcuts')}
                     className="hover:text-amber-300 transition-colors cursor-pointer"
                   >
