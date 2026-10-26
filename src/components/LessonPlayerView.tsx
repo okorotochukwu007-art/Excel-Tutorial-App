@@ -45,6 +45,7 @@ import {
 import {
   fetchAuthorizedLessonVideo,
   fetchStudentLessonRecommendations,
+  getBundledOrLocalLessonRecommendations,
   SupabaseBackendStatus,
 } from '../services/academyService';
 import { LessonQnAView } from './LessonQnAView';
@@ -153,11 +154,14 @@ export const LessonPlayerView: React.FC<LessonPlayerViewProps> = ({
   // Cached Approved Recommendations & Explicit Student Video State (A, B, C, D)
   const [loadingRecs, setLoadingRecs] = useState<boolean>(false);
   const [approvedRecs, setApprovedRecs] = useState<YoutubeVideoRecommendation[]>(
-    []
+    () =>
+      getBundledOrLocalLessonRecommendations(activeLessonId).recommendations.filter(
+        (r) => r.status === 'approved'
+      )
   );
   const [studentRecState, setStudentRecState] =
-    useState<StudentRecommendationState>('searching_or_awaiting_approval');
-  const [candidateCount, setCandidateCount] = useState<number>(0);
+    useState<StudentRecommendationState>('approved_available');
+  const [candidateCount, setCandidateCount] = useState<number>(3);
   const [recReviewReason, setRecReviewReason] = useState<string | null>(null);
   const [recErrorMessage, setRecErrorMessage] = useState<string | null>(null);
   const [selectedRecIndex, setSelectedRecIndex] = useState<number>(0);
@@ -202,14 +206,33 @@ export const LessonPlayerView: React.FC<LessonPlayerViewProps> = ({
   const nextLesson =
     currentIdx < allLessons.length - 1 ? allLessons[currentIdx + 1].lesson : null;
 
+  const bundledApprovedForCurrent = getBundledOrLocalLessonRecommendations(
+    currentLesson.id
+  ).recommendations.filter((r) => r.status === 'approved');
+
   const loadRecommendationsForCurrentLesson = (retry = false) => {
-    setLoadingRecs(true);
+    const immediateBundled = getBundledOrLocalLessonRecommendations(
+      currentLesson.id
+    ).recommendations.filter((r) => r.status === 'approved');
+
+    if (immediateBundled.length > 0) {
+      setApprovedRecs(immediateBundled);
+      setStudentRecState('approved_available');
+    } else {
+      setLoadingRecs(true);
+    }
     setRecErrorMessage(null);
     fetchStudentLessonRecommendations(currentLesson.id, { retry })
       .then((recRes) => {
-        setApprovedRecs(recRes.recommendations || []);
-        setStudentRecState(recRes.studentState);
-        setCandidateCount(recRes.candidateCount || 0);
+        const recs =
+          recRes.recommendations && recRes.recommendations.length > 0
+            ? recRes.recommendations
+            : immediateBundled;
+        setApprovedRecs(recs);
+        setStudentRecState(
+          recs.length > 0 ? 'approved_available' : recRes.studentState
+        );
+        setCandidateCount(recRes.candidateCount || recs.length);
         setRecReviewReason(recRes.reviewReason || null);
         setRecErrorMessage(recRes.lastError || recRes.error || null);
       })
@@ -313,8 +336,11 @@ export const LessonPlayerView: React.FC<LessonPlayerViewProps> = ({
     return null;
   };
 
+  const effectiveApprovedRecs =
+    approvedRecs.length > 0 ? approvedRecs : bundledApprovedForCurrent;
+
   const activeRec: YoutubeVideoRecommendation | null =
-    approvedRecs[selectedRecIndex] || approvedRecs[0] || null;
+    effectiveApprovedRecs[selectedRecIndex] || effectiveApprovedRecs[0] || null;
 
   const fallbackVideoId =
     extractYoutubeId(serverVideoAuth.youtubeVideoId || '') ||
@@ -332,8 +358,8 @@ export const LessonPlayerView: React.FC<LessonPlayerViewProps> = ({
   const beginnerTasks = buildPracticalTasksForBeginner(currentLesson);
 
   const handleCycleAlternativeTutorial = () => {
-    if (approvedRecs.length <= 1) return;
-    setSelectedRecIndex((prev) => (prev + 1) % approvedRecs.length);
+    if (effectiveApprovedRecs.length <= 1) return;
+    setSelectedRecIndex((prev) => (prev + 1) % effectiveApprovedRecs.length);
     setIsPlayerOpen(true);
   };
 
@@ -532,7 +558,7 @@ export const LessonPlayerView: React.FC<LessonPlayerViewProps> = ({
                 </div>
               </div>
 
-              {approvedRecs.length > 1 && (
+              {effectiveApprovedRecs.length > 1 && (
                 <button
                   type="button"
                   onClick={handleCycleAlternativeTutorial}
@@ -541,7 +567,7 @@ export const LessonPlayerView: React.FC<LessonPlayerViewProps> = ({
                   <RefreshCw className="w-3.5 h-3.5" />
                   <span>
                     View Another Recommended Tutorial ({selectedRecIndex + 1}/
-                    {approvedRecs.length})
+                    {effectiveApprovedRecs.length})
                   </span>
                 </button>
               )}
@@ -690,13 +716,13 @@ export const LessonPlayerView: React.FC<LessonPlayerViewProps> = ({
                   </div>
 
                   {/* Option to Switch Between Primary and Alternative Tutorials */}
-                  {approvedRecs.length > 1 && (
+                  {effectiveApprovedRecs.length > 1 && (
                     <div className="space-y-2 pt-1">
                       <div className="text-xs font-semibold text-slate-700">
                         Want a different explanation style? Choose another approved tutorial for this lesson:
                       </div>
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                        {approvedRecs.map((rec, idx) => {
+                        {effectiveApprovedRecs.map((rec, idx) => {
                           const isCurrent = idx === selectedRecIndex;
                           return (
                             <button
