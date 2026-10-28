@@ -30,16 +30,103 @@ import { CertificatePreviewModal } from './components/CertificatePreviewModal';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { supabase } from './lib/supabaseClient';
 import {
+  checkStudentEmailFullAccess,
   fetchOrCreateUserProfile,
   fetchPublicVideoCoverageMap,
   fetchSupabaseBackendStatus,
   insertQuizAttemptToSupabase,
+  isEmailGrantedFullAccessLocally,
+  loadLocalStudentProgress,
   loadStudentProgressFromSupabase,
+  saveFullStudentProgressSnapshot,
   SupabaseBackendStatus,
   syncLessonCompletionToSupabase,
   syncProjectSubmissionToSupabase,
   updateProfileFullNameInSupabase,
 } from './services/academyService';
+
+const ACTIVE_PROFILE_STORAGE_KEY = 'excel_academy_active_profile_v1';
+
+function loadSavedActiveProfile(): Profile | null {
+  try {
+    const raw = localStorage.getItem(ACTIVE_PROFILE_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && parsed.id && parsed.email && !parsed.isDemoSession) {
+      return parsed;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function saveActiveProfile(profile: Profile | null) {
+  try {
+    if (!profile || profile.isDemoSession) {
+      localStorage.removeItem(ACTIVE_PROFILE_STORAGE_KEY);
+    } else {
+      localStorage.setItem(ACTIVE_PROFILE_STORAGE_KEY, JSON.stringify(profile));
+    }
+  } catch {}
+}
+
+function ensureConsistentCompletedLessons(
+  _completedIds: string[],
+  attempts: QuizAttempt[],
+  curriculumLevels: CurriculumLevel[]
+): string[] {
+  const set = new Set<string>();
+
+  // 1. Any passed module quiz ('quiz-lvl-...') marks its lesson completed
+  for (const att of attempts) {
+    if (att.passed && att.quizId?.startsWith('quiz-')) {
+      const lessonId = att.quizId.replace(/^quiz-/, '');
+      if (lessonId) set.add(lessonId);
+    }
+  }
+
+  // 2. Any passed Level Final Exam ('exam-lvl-N') ensures all lessons in Level N are marked completed
+  for (const lvl of curriculumLevels) {
+    const passedLevelExam = attempts.some(
+      (att) => att.quizId === `exam-lvl-${lvl.levelNumber}` && att.passed
+    );
+    if (passedLevelExam) {
+      for (const mod of lvl.modules) {
+        for (const les of mod.lessons) {
+          set.add(les.id);
+        }
+      }
+    }
+  }
+
+  return Array.from(set);
+}
+
+function resolveBestResumeLessonId(
+  completedIds: string[],
+  savedActiveId: string | null | undefined,
+  curriculumLevels: CurriculumLevel[]
+): string {
+  const allOrdered: Lesson[] = [];
+  curriculumLevels.forEach((lvl) => {
+    lvl.modules.forEach((mod) => {
+      mod.lessons
+        .slice()
+        .sort((a, b) => a.orderIndex - b.orderIndex)
+        .forEach((les) => allOrdered.push(les));
+    });
+  });
+
+  const firstUncompleted = allOrdered.find((l) => !completedIds.includes(l.id));
+  if (savedActiveId && !completedIds.includes(savedActiveId)) {
+    return savedActiveId;
+  }
+  if (firstUncompleted) {
+    return firstUncompleted.id;
+  }
+  return savedActiveId || allOrdered[allOrdered.length - 1]?.id || 'lvl-1-mod-1-les-1';
+}
 
 export default function App() {
   const [currentView, setCurrentView] = useState<AppView>('home');
@@ -55,41 +142,86 @@ export default function App() {
     message: 'Checking Supabase connection status...',
   });
 
-  const [currentUser, setCurrentUser] = useState<Profile>({
-    id: 'demo-student-01',
-    email: 'demo.student@excelacademy.local',
-    fullName: 'Demo Student (Local Session)',
-    role: 'student_demo',
-    createdAt: '2026-10-23',
-    isDemoSession: true,
+  const [currentUser, setCurrentUser] = useState<Profile>(() => {
+    const saved = loadSavedActiveProfile();
+    return (
+      saved || {
+        id: 'demo-student-01',
+        email: 'demo.student@excelacademy.local',
+        fullName: 'Guest Learner',
+        role: 'student_demo',
+        createdAt: '2026-10-23',
+        isDemoSession: true,
+      }
+    );
   });
 
-  const [completedLessonIds, setCompletedLessonIds] = useState<string[]>([
-    'lvl-1-mod-1-les-1',
-    'lvl-1-mod-1-les-2',
-    'lvl-1-mod-2-les-1',
-  ]);
-  const [activeLessonId, setActiveLessonId] = useState<string>('lvl-1-mod-2-les-2');
-  const [recentlyViewedLessonId, setRecentlyViewedLessonId] =
-    useState<string>('lvl-1-mod-2-les-2');
+  const [completedLessonIds, setCompletedLessonIds] = useState<string[]>(() => {
+    const saved = loadSavedActiveProfile();
+    if (saved) {
+      const localProg = loadLocalStudentProgress(saved.id, saved.email);
+      return ensureConsistentCompletedLessons(
+        localProg.completedLessonIds,
+        localProg.quizAttempts,
+        CURRICULUM_LEVELS
+      );
+    }
+    return [];
+  });
 
-  const [quizAttempts, setQuizAttempts] = useState<QuizAttempt[]>([
-    {
-      id: 'demo-att-1',
-      quizId: 'quiz-lvl-1-mod-1-les-1',
-      lessonTitle: 'Introduction to Excel and the spreadsheet interface: Core Concepts & Walkthrough',
-      scorePercent: 100,
-      passed: true,
-      totalQuestions: 3,
-      correctCount: 3,
-      attemptedAt: 'Demo Session Initial',
-      isSimulatedLocal: true,
-    },
-  ]);
+  const [quizAttempts, setQuizAttempts] = useState<QuizAttempt[]>(() => {
+    const saved = loadSavedActiveProfile();
+    if (saved) {
+      return loadLocalStudentProgress(saved.id, saved.email).quizAttempts;
+    }
+    return [];
+  });
 
   const [projectSubmissions, setProjectSubmissions] = useState<
     Record<string, ProjectSubmissionState>
-  >({});
+  >(() => {
+    const saved = loadSavedActiveProfile();
+    if (saved) {
+      return loadLocalStudentProgress(saved.id, saved.email).projectSubmissions;
+    }
+    return {};
+  });
+
+  const [activeLessonId, setActiveLessonId] = useState<string>(() => {
+    const saved = loadSavedActiveProfile();
+    if (saved) {
+      const localProg = loadLocalStudentProgress(saved.id, saved.email);
+      const completed = ensureConsistentCompletedLessons(
+        localProg.completedLessonIds,
+        localProg.quizAttempts,
+        CURRICULUM_LEVELS
+      );
+      return resolveBestResumeLessonId(
+        completed,
+        localProg.activeLessonId,
+        CURRICULUM_LEVELS
+      );
+    }
+    return 'lvl-1-mod-1-les-1';
+  });
+
+  const [recentlyViewedLessonId, setRecentlyViewedLessonId] = useState<string>(() => {
+    const saved = loadSavedActiveProfile();
+    if (saved) {
+      const localProg = loadLocalStudentProgress(saved.id, saved.email);
+      const completed = ensureConsistentCompletedLessons(
+        localProg.completedLessonIds,
+        localProg.quizAttempts,
+        CURRICULUM_LEVELS
+      );
+      return resolveBestResumeLessonId(
+        completed,
+        localProg.recentlyViewedLessonId || localProg.activeLessonId,
+        CURRICULUM_LEVELS
+      );
+    }
+    return 'lvl-1-mod-1-les-1';
+  });
 
   // Modals state
   const [authModalOpen, setAuthModalOpen] = useState(false);
@@ -104,12 +236,99 @@ export default function App() {
   const [lockNoticeBanner, setLockNoticeBanner] = useState<string | null>(null);
 
   const [hasPaid, setHasPaid] = useState<boolean>(() => {
-    return localStorage.getItem('excel_academy_has_paid') === 'true';
+    const saved = loadSavedActiveProfile();
+    if (saved && saved.email) {
+      return isEmailGrantedFullAccessLocally(saved.email);
+    }
+    return false;
   });
 
   const isAuthenticated = Boolean(currentUser && !currentUser.isDemoSession);
   const isInstructor = currentUser?.email?.toLowerCase() === 'okorotochukwu007@gmail.com';
   const isPurchased = isInstructor || hasPaid;
+
+  // Hydrate and merge student progress + Full Access status from localStorage + Server + Supabase tables
+  const restoreProgressForProfile = async (profile: Profile) => {
+    saveActiveProfile(profile);
+    if (profile.isDemoSession) {
+      setHasPaid(false);
+      return;
+    }
+    const [dbProgress, accessRes] = await Promise.all([
+      loadStudentProgressFromSupabase(profile.id, profile.email),
+      checkStudentEmailFullAccess(profile.email, profile.fullName),
+    ]);
+    const entitled = Boolean(
+      dbProgress.hasFullAccess ||
+        accessRes.hasFullAccess ||
+        profile.email?.toLowerCase() === 'okorotochukwu007@gmail.com'
+    );
+    setHasPaid(entitled);
+
+    const consistentCompleted = ensureConsistentCompletedLessons(
+      dbProgress.completedLessonIds,
+      dbProgress.quizAttempts,
+      levels
+    );
+    const resumeLessonId = resolveBestResumeLessonId(
+      consistentCompleted,
+      dbProgress.activeLessonId,
+      levels
+    );
+
+    setCompletedLessonIds(consistentCompleted);
+    setQuizAttempts(dbProgress.quizAttempts);
+    setProjectSubmissions(dbProgress.projectSubmissions);
+    setActiveLessonId(resumeLessonId);
+    setRecentlyViewedLessonId(resumeLessonId);
+  };
+
+  // Poll student email access status every 8 seconds so instructor-granted Full Access unlocks Levels 2–6 live
+  useEffect(() => {
+    if (!currentUser || currentUser.isDemoSession || isInstructor) return;
+    const cleanEmail = (currentUser.email || '').trim().toLowerCase();
+    if (!cleanEmail || !cleanEmail.includes('@') || cleanEmail.endsWith('.local')) {
+      return;
+    }
+
+    let cancelled = false;
+    const syncAccess = async () => {
+      try {
+        const res = await checkStudentEmailFullAccess(
+          cleanEmail,
+          currentUser.fullName
+        );
+        if (!cancelled && res.ok) {
+          setHasPaid(Boolean(res.hasFullAccess));
+        }
+      } catch {}
+    };
+
+    const timer = setInterval(syncAccess, 8000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [currentUser, isInstructor]);
+
+  // Automatically persist student progress whenever state updates while logged in
+  useEffect(() => {
+    if (!currentUser || currentUser.isDemoSession) return;
+    saveFullStudentProgressSnapshot(currentUser.id, currentUser.email, {
+      completedLessonIds,
+      quizAttempts,
+      projectSubmissions,
+      activeLessonId,
+      recentlyViewedLessonId,
+    }).catch(() => {});
+  }, [
+    currentUser,
+    completedLessonIds,
+    quizAttempts,
+    projectSubmissions,
+    activeLessonId,
+    recentlyViewedLessonId,
+  ]);
 
   const checkLessonAccess = (lessonId: string): {
     unlocked: boolean;
@@ -160,10 +379,18 @@ export default function App() {
       }
     }
 
-    // Finish each lesson quiz before starting the next lesson
+    // Finish and pass each lesson quiz before starting the next lesson
     if (targetIdx > 0) {
       const prevLesson = allOrderedLessons[targetIdx - 1];
-      const isPrevCompleted = completedLessonIds.includes(prevLesson.id);
+      const hasPassedPrevQuiz = quizAttempts.some(
+        (att) =>
+          att.passed &&
+          (att.quizId === prevLesson.quiz?.id ||
+            att.quizId === `quiz-${prevLesson.id}` ||
+            att.quizId === `exam-lvl-${prevLesson.levelNumber}`)
+      );
+      const isPrevCompleted =
+        completedLessonIds.includes(prevLesson.id) && hasPassedPrevQuiz;
       if (!isPrevCompleted) {
         return {
           unlocked: false,
@@ -202,6 +429,12 @@ export default function App() {
       })
       .catch(() => {});
 
+    // If a saved profile was loaded on mount, also sync its latest progress from server
+    const savedProfile = loadSavedActiveProfile();
+    if (savedProfile && !savedProfile.isDemoSession) {
+      restoreProgressForProfile(savedProfile).catch(() => {});
+    }
+
     if (!supabase) return;
 
     supabase.auth
@@ -217,10 +450,7 @@ export default function App() {
             );
             if (profile) {
               setCurrentUser(profile);
-              const dbProgress = await loadStudentProgressFromSupabase(u.id);
-              setCompletedLessonIds(dbProgress.completedLessonIds);
-              setQuizAttempts(dbProgress.quizAttempts);
-              setProjectSubmissions(dbProgress.projectSubmissions);
+              await restoreProgressForProfile(profile);
             }
           }
         } catch (err) {
@@ -249,10 +479,7 @@ export default function App() {
               );
               if (profile) {
                 setCurrentUser(profile);
-                const dbProgress = await loadStudentProgressFromSupabase(u.id);
-                setCompletedLessonIds(dbProgress.completedLessonIds);
-                setQuizAttempts(dbProgress.quizAttempts);
-                setProjectSubmissions(dbProgress.projectSubmissions);
+                await restoreProgressForProfile(profile);
               }
             }
           } catch (err) {
@@ -397,8 +624,12 @@ export default function App() {
         return;
       } else if (access.reason === 'sequence_locked') {
         setLockNoticeBanner(
-          `Lesson Locked: Please complete the previous lesson quiz ("${access.requiredLessonTitle}") before starting this lesson.`
+          `Module Locked: You must pass the quiz for "${access.requiredLessonTitle}" (unlimited retakes available) before moving to the next module.`
         );
+        const quizEl = document.getElementById('module-quiz-section');
+        if (quizEl) {
+          quizEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
         return;
       } else if (access.reason === 'level_quiz_required' && access.requiredLevelNumber) {
         setLockNoticeBanner(
@@ -417,25 +648,69 @@ export default function App() {
   };
 
   const handleToggleCompleteLesson = async (lessonId: string) => {
+    if (!isInstructor) {
+      let targetLevelNum = 1;
+      for (const lvl of levels) {
+        for (const mod of lvl.modules) {
+          if (mod.lessons.some((l) => l.id === lessonId)) {
+            targetLevelNum = lvl.levelNumber;
+          }
+        }
+      }
+      const hasPassedQuizForLesson = quizAttempts.some(
+        (att) =>
+          att.passed &&
+          (att.quizId === `quiz-${lessonId}` ||
+            att.quizId === `exam-lvl-${targetLevelNum}`)
+      );
+
+      if (!hasPassedQuizForLesson) {
+        setLockNoticeBanner(
+          'Please pass the Module Quiz at the bottom of this lesson (unlimited retakes available) before marking the lesson as completed or moving to the next module.'
+        );
+        const quizEl = document.getElementById('module-quiz-section');
+        if (quizEl) {
+          quizEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+        return;
+      }
+
+      // If the student already passed the quiz, keep it marked completed
+      if (completedLessonIds.includes(lessonId)) {
+        return;
+      }
+    }
+
     const isCurrentlyCompleted = completedLessonIds.includes(lessonId);
     const nextCompletedState = !isCurrentlyCompleted;
+    const nextCompletedIds = nextCompletedState
+      ? Array.from(new Set([...completedLessonIds, lessonId]))
+      : completedLessonIds.filter((id) => id !== lessonId);
 
-    setCompletedLessonIds((prev) =>
-      nextCompletedState
-        ? [...prev, lessonId]
-        : prev.filter((id) => id !== lessonId)
-    );
+    setCompletedLessonIds(nextCompletedIds);
 
-    if (!currentUser.isDemoSession && supabase) {
-      await syncLessonCompletionToSupabase(
-        currentUser.id,
-        lessonId,
-        nextCompletedState
-      );
+    if (!currentUser.isDemoSession) {
+      saveFullStudentProgressSnapshot(currentUser.id, currentUser.email, {
+        completedLessonIds: nextCompletedIds,
+        quizAttempts,
+        projectSubmissions,
+        activeLessonId,
+        recentlyViewedLessonId,
+      }).catch(() => {});
+
+      if (supabase) {
+        await syncLessonCompletionToSupabase(
+          currentUser.id,
+          lessonId,
+          nextCompletedState
+        );
+      }
     }
   };
 
   const handleRecordQuizAttempt = async (attempt: QuizAttempt) => {
+    let finalAttempt = attempt;
+
     if (!currentUser.isDemoSession && supabase) {
       const res = await insertQuizAttemptToSupabase(currentUser.id, {
         quizId: attempt.quizId,
@@ -446,11 +721,62 @@ export default function App() {
         correctCount: attempt.correctCount,
       });
       if (res.ok && res.savedAttempt) {
-        setQuizAttempts((prev) => [res.savedAttempt!, ...prev]);
-        return;
+        finalAttempt = res.savedAttempt;
       }
     }
-    setQuizAttempts((prev) => [attempt, ...prev]);
+
+    const nextAttempts = [finalAttempt, ...quizAttempts];
+    const nextCompletedIds = ensureConsistentCompletedLessons(
+      completedLessonIds,
+      nextAttempts,
+      levels
+    );
+
+    if (finalAttempt.passed) {
+      setLockNoticeBanner(null);
+    }
+
+    let nextActiveId = activeLessonId;
+    let nextRecentId = recentlyViewedLessonId;
+
+    // If the student just passed a Level Final Exam, automatically advance their resume lesson to the next level
+    if (finalAttempt.passed && finalAttempt.quizId?.startsWith('exam-lvl-')) {
+      const passedLvlNum = Number(finalAttempt.quizId.replace('exam-lvl-', ''));
+      const nextLvlObj = levels.find((l) => l.levelNumber === passedLvlNum + 1);
+      const firstLessonInNextLvl = nextLvlObj?.modules[0]?.lessons[0];
+      if (firstLessonInNextLvl) {
+        nextActiveId = firstLessonInNextLvl.id;
+        nextRecentId = firstLessonInNextLvl.id;
+        setActiveLessonId(nextActiveId);
+        setRecentlyViewedLessonId(nextRecentId);
+      }
+    }
+
+    setQuizAttempts(nextAttempts);
+    setCompletedLessonIds(nextCompletedIds);
+
+    if (!currentUser.isDemoSession) {
+      if (
+        finalAttempt.passed &&
+        finalAttempt.quizId?.startsWith('quiz-') &&
+        supabase
+      ) {
+        const passedLessonId = finalAttempt.quizId.replace(/^quiz-/, '');
+        syncLessonCompletionToSupabase(
+          currentUser.id,
+          passedLessonId,
+          true
+        ).catch(() => {});
+      }
+
+      await saveFullStudentProgressSnapshot(currentUser.id, currentUser.email, {
+        completedLessonIds: nextCompletedIds,
+        quizAttempts: nextAttempts,
+        projectSubmissions,
+        activeLessonId: nextActiveId,
+        recentlyViewedLessonId: nextRecentId,
+      });
+    }
   };
 
   const handleToggleProjectChecklist = async (
@@ -608,8 +934,18 @@ export default function App() {
   };
 
   const handleLogout = async () => {
+    if (!currentUser.isDemoSession) {
+      await saveFullStudentProgressSnapshot(currentUser.id, currentUser.email, {
+        completedLessonIds,
+        quizAttempts,
+        projectSubmissions,
+        activeLessonId,
+        recentlyViewedLessonId,
+      }).catch(() => {});
+    }
+    saveActiveProfile(null);
     if (supabase && !currentUser.isDemoSession) {
-      await supabase.auth.signOut();
+      await supabase.auth.signOut().catch(() => {});
     }
     setCurrentUser({
       id: 'demo-student-01',
@@ -619,6 +955,12 @@ export default function App() {
       createdAt: '2026-10-23',
       isDemoSession: true,
     });
+    setCompletedLessonIds([]);
+    setQuizAttempts([]);
+    setProjectSubmissions({});
+    setHasPaid(false);
+    setActiveLessonId('lvl-1-mod-1-les-1');
+    setRecentlyViewedLessonId('lvl-1-mod-1-les-1');
     setCurrentView('home');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -938,12 +1280,7 @@ export default function App() {
         onAuthenticated={async (profile) => {
           setCurrentUser(profile);
           setAuthPromptNotice(null);
-          if (!profile.isDemoSession) {
-            const dbProgress = await loadStudentProgressFromSupabase(profile.id);
-            setCompletedLessonIds(dbProgress.completedLessonIds);
-            setQuizAttempts(dbProgress.quizAttempts);
-            setProjectSubmissions(dbProgress.projectSubmissions);
-          }
+          await restoreProgressForProfile(profile);
           const isAdminLogin =
             profile.email?.toLowerCase() === 'okorotochukwu007@gmail.com' ||
             profile.role === 'admin';

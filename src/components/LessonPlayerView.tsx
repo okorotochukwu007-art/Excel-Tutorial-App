@@ -87,6 +87,7 @@ export const LessonPlayerView: React.FC<LessonPlayerViewProps> = ({
   const [sidebarLevelNumber, setSidebarLevelNumber] = useState<number>(1);
   const [selectedAnswers, setSelectedAnswers] = useState<Record<string, number>>({});
   const [quizSubmitted, setQuizSubmitted] = useState(false);
+  const [quizRequirementNotice, setQuizRequirementNotice] = useState<string | null>(null);
 
   // Cached Approved Recommendations & Explicit Student Video State (A, B, C, D)
   const [loadingRecs, setLoadingRecs] = useState<boolean>(false);
@@ -182,6 +183,7 @@ export const LessonPlayerView: React.FC<LessonPlayerViewProps> = ({
     setSidebarLevelNumber(currentLesson.levelNumber);
     setSelectedAnswers({});
     setQuizSubmitted(false);
+    setQuizRequirementNotice(null);
     setSelectedRecIndex(0);
     setIsPlayerOpen(true);
 
@@ -210,10 +212,49 @@ export const LessonPlayerView: React.FC<LessonPlayerViewProps> = ({
     supabaseStatus,
   ]);
 
-  const isCompleted = completedLessonIds.includes(currentLesson.id);
+  const isInstructorUser =
+    currentUser?.email?.toLowerCase() === 'okorotochukwu007@gmail.com';
+
+  const hasPassedLessonQuizById = (lessonId: string, levelNumber: number) => {
+    if (isInstructorUser) return completedLessonIds.includes(lessonId);
+    return (
+      completedLessonIds.includes(lessonId) &&
+      quizAttempts.some(
+        (att) =>
+          att.passed &&
+          (att.quizId === `quiz-${lessonId}` ||
+            att.quizId === `exam-lvl-${levelNumber}`)
+      )
+    );
+  };
+
+  const hasPassedCurrentQuiz =
+    isInstructorUser ||
+    quizAttempts.some(
+      (att) =>
+        att.passed &&
+        (att.quizId === currentLesson.quiz?.id ||
+          att.quizId === `quiz-${currentLesson.id}` ||
+          att.quizId === `exam-lvl-${currentLesson.levelNumber}`)
+    );
+
+  const isCompleted = isInstructorUser
+    ? completedLessonIds.includes(currentLesson.id)
+    : hasPassedCurrentQuiz && completedLessonIds.includes(currentLesson.id);
+
   const overallPct = Math.round(
     (completedLessonIds.length / Math.max(1, allLessons.length)) * 100
   );
+
+  const scrollToModuleQuizWithPrompt = () => {
+    setQuizRequirementNotice(
+      `You must pass this module's quiz (${currentLesson.quiz?.passingScorePercent || 67}%+ required) before marking this lesson as completed or moving to the next module. You can retake the quiz as many times as needed!`
+    );
+    const quizEl = document.getElementById('module-quiz-section');
+    if (quizEl) {
+      quizEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  };
 
   const handleQuizSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -229,8 +270,8 @@ export const LessonPlayerView: React.FC<LessonPlayerViewProps> = ({
     const passed = scorePercent >= currentLesson.quiz.passingScorePercent;
 
     setQuizSubmitted(true);
-    if (passed && !completedLessonIds.includes(currentLesson.id)) {
-      onToggleCompleteLesson(currentLesson.id);
+    if (passed) {
+      setQuizRequirementNotice(null);
     }
     onRecordQuizAttempt({
       id: `att-${Date.now()}`,
@@ -258,8 +299,6 @@ export const LessonPlayerView: React.FC<LessonPlayerViewProps> = ({
     );
   };
 
-  const isInstructorUser =
-    currentUser?.email?.toLowerCase() === 'okorotochukwu007@gmail.com';
   const isLastLessonOfLevel =
     !nextLesson || nextLesson.levelNumber > currentLesson.levelNumber;
   const currentLevelExamPassedAttempt = getPassedLevelExamAttempt(
@@ -358,7 +397,7 @@ export const LessonPlayerView: React.FC<LessonPlayerViewProps> = ({
                     .sort((a, b) => a.orderIndex - b.orderIndex)
                     .map((les) => {
                       const isActive = les.id === currentLesson.id;
-                      const isDone = completedLessonIds.includes(les.id);
+                      const isDone = hasPassedLessonQuizById(les.id, les.levelNumber);
                       const lesIdxInAll = allLessons.findIndex((item) => item.lesson.id === les.id);
                       const isLevelLocked =
                         les.levelNumber > 1 &&
@@ -368,10 +407,11 @@ export const LessonPlayerView: React.FC<LessonPlayerViewProps> = ({
                         les.levelNumber > 1 &&
                         !isInstructorUser &&
                         !getPassedLevelExamAttempt(les.levelNumber - 1);
+                      const prevLesObj = lesIdxInAll > 0 ? allLessons[lesIdxInAll - 1]?.lesson : null;
                       const isSeqLocked =
                         !isInstructorUser &&
-                        lesIdxInAll > 0 &&
-                        !completedLessonIds.includes(allLessons[lesIdxInAll - 1]?.lesson.id);
+                        Boolean(prevLesObj) &&
+                        !hasPassedLessonQuizById(prevLesObj!.id, prevLesObj!.levelNumber);
                       const isLocked = isLevelLocked || isPrevLevelQuizLocked || isSeqLocked;
 
                       return (
@@ -531,15 +571,30 @@ export const LessonPlayerView: React.FC<LessonPlayerViewProps> = ({
 
               <button
                 type="button"
-                onClick={() => onToggleCompleteLesson(currentLesson.id)}
+                onClick={() => {
+                  if (isInstructorUser || isCompleted) {
+                    onToggleCompleteLesson(currentLesson.id);
+                  } else {
+                    scrollToModuleQuizWithPrompt();
+                  }
+                }}
                 className={`px-4 py-2.5 rounded-lg text-xs font-semibold flex items-center gap-2 whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
                   isCompleted
                     ? 'bg-emerald-800 text-white hover:bg-emerald-900'
                     : 'bg-slate-900 text-white hover:bg-emerald-800'
                 }`}
               >
-                <Check className="w-4 h-4" />
-                {isCompleted ? 'Completed' : 'Mark as Complete'}
+                {isCompleted ? (
+                  <>
+                    <Check className="w-4 h-4" />
+                    <span>Quiz Passed · Completed</span>
+                  </>
+                ) : (
+                  <>
+                    <HelpCircle className="w-4 h-4 text-emerald-400" />
+                    <span>Pass Quiz to Complete</span>
+                  </>
+                )}
               </button>
             </div>
           </div>
@@ -927,9 +982,23 @@ export const LessonPlayerView: React.FC<LessonPlayerViewProps> = ({
 
           {/* 3. AFTER THE VIDEO: VIDEO-ALIGNED MODULE QUIZ (REPLACES GENERIC EXERCISE CHECKLIST) */}
           <section
+            id="module-quiz-section"
             aria-label="Video-Aligned Module Quiz"
             className="bg-white border-2 border-emerald-700/30 rounded-xl p-6 space-y-5 shadow-xs"
           >
+            {quizRequirementNotice && (
+              <div className="p-3.5 rounded-lg bg-amber-50 border border-amber-300 text-amber-950 text-xs font-medium flex items-center justify-between gap-3">
+                <span>{quizRequirementNotice}</span>
+                <button
+                  type="button"
+                  onClick={() => setQuizRequirementNotice(null)}
+                  className="px-2.5 py-1 rounded bg-amber-200/80 hover:bg-amber-300 text-amber-950 font-bold shrink-0 cursor-pointer"
+                >
+                  Got It
+                </button>
+              </div>
+            )}
+
             <div className="border-b border-slate-200 pb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="space-y-1">
                 <div className="flex flex-wrap items-center gap-2">
@@ -940,6 +1009,11 @@ export const LessonPlayerView: React.FC<LessonPlayerViewProps> = ({
                     {currentLesson.quiz?.questions.length || 3} Questions · Pass with{' '}
                     {currentLesson.quiz?.passingScorePercent || 67}%+ · Unlimited Retakes
                   </span>
+                  {isCompleted && (
+                    <span className="px-2 py-0.5 rounded bg-emerald-800 text-white font-mono text-[10px] font-bold uppercase">
+                      ✓ Quiz Passed
+                    </span>
+                  )}
                 </div>
                 <h3 className="text-base sm:text-lg font-bold text-slate-900">
                   Quiz: {currentEntry.moduleTitle}
@@ -949,21 +1023,22 @@ export const LessonPlayerView: React.FC<LessonPlayerViewProps> = ({
                   <strong className="text-slate-800">
                     {activeRec?.title || currentLesson.title}
                   </strong>{' '}
-                  video tutorial above. Passing this quiz automatically completes the lesson, and you can retake it as many times as you like!
+                  video tutorial above. You must pass this quiz to complete the lesson and unlock the next module—and you can retake it as many times as you like!
                 </p>
               </div>
 
-              {quizSubmitted && (
+              {(quizSubmitted || Object.keys(selectedAnswers).length > 0 || isCompleted) && (
                 <button
                   type="button"
                   onClick={() => {
                     setSelectedAnswers({});
                     setQuizSubmitted(false);
+                    setQuizRequirementNotice(null);
                   }}
                   className="px-3.5 py-2 text-xs font-semibold text-slate-800 bg-slate-100 border border-slate-300 rounded-lg hover:bg-slate-200 transition-colors flex items-center gap-1.5 shrink-0 cursor-pointer"
                 >
                   <RefreshCw className="w-3.5 h-3.5" />
-                  <span>Retake Quiz</span>
+                  <span>{quizSubmitted ? 'Retake Quiz' : 'Reset / Retake Quiz'}</span>
                 </button>
               )}
             </div>
@@ -1207,26 +1282,43 @@ export const LessonPlayerView: React.FC<LessonPlayerViewProps> = ({
 
             {/* Module Completion Footer */}
             <div className="pt-4 border-t border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <span className="text-xs text-slate-500">
-                Pass the quiz above (unlimited retakes) to complete this module.
+              <span className="text-xs text-slate-600">
+                {isCompleted
+                  ? '✓ Module quiz passed and lesson completed! You can retake the quiz anytime or proceed to the next module.'
+                  : 'You must pass the module quiz above (unlimited retakes) to complete this lesson and unlock the next module.'}
               </span>
 
-              <button
-                type="button"
-                onClick={() => onToggleCompleteLesson(currentLesson.id)}
-                className={`px-4 py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-2 transition-colors cursor-pointer ${
-                  isCompleted
-                    ? 'bg-emerald-800 text-white hover:bg-emerald-900'
-                    : 'bg-slate-900 text-white hover:bg-emerald-800'
-                }`}
-              >
-                <Check className="w-4 h-4" />
-                <span>
-                  {isCompleted
-                    ? 'Module Lesson Completed ✓'
-                    : 'Mark Lesson as Completed'}
-                </span>
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                {isCompleted ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedAnswers({});
+                        setQuizSubmitted(false);
+                        setQuizRequirementNotice(null);
+                      }}
+                      className="px-3.5 py-2 rounded-lg text-xs font-semibold bg-slate-100 border border-slate-300 text-slate-800 hover:bg-slate-200 flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      <span>Retake Quiz</span>
+                    </button>
+                    <span className="px-4 py-2 rounded-lg text-xs font-semibold bg-emerald-800 text-white flex items-center gap-2">
+                      <Check className="w-4 h-4" />
+                      <span>Module Lesson Completed ✓</span>
+                    </span>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={scrollToModuleQuizWithPrompt}
+                    className="px-4 py-2 rounded-lg text-xs font-semibold bg-amber-100 text-amber-950 border border-amber-300 hover:bg-amber-200 flex items-center justify-center gap-2 transition-colors cursor-pointer"
+                  >
+                    <Lock className="w-3.5 h-3.5 text-amber-800" />
+                    <span>Pass Quiz Above to Complete Lesson</span>
+                  </button>
+                )}
+              </div>
             </div>
           </section>
 
@@ -1337,33 +1429,31 @@ export const LessonPlayerView: React.FC<LessonPlayerViewProps> = ({
               Lesson {currentIdx + 1} of {allLessons.length}
             </div>
 
-            {nextLesson &&
-            nextLesson.levelNumber > currentLesson.levelNumber &&
-            !currentLevelExamPassedAttempt &&
-            !isInstructorUser &&
-            onOpenLevelExam ? (
-              isCompleted ? (
-                <button
-                  type="button"
-                  onClick={() => onOpenLevelExam(currentLesson.levelNumber)}
-                  className="px-4 py-2 rounded-lg text-xs font-bold bg-emerald-700 hover:bg-emerald-600 text-white flex items-center gap-2 transition-colors cursor-pointer shadow-xs"
-                >
-                  <span>
-                    Take Level {currentLesson.levelNumber} Final Exam to Unlock
-                    Level {nextLesson.levelNumber}
-                  </span>
-                  <ChevronRight className="w-4 h-4" />
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  disabled
-                  className="px-4 py-2 rounded-lg text-xs font-bold bg-slate-200 text-slate-500 border border-slate-300 flex items-center gap-2 cursor-not-allowed"
-                >
-                  <Lock className="w-3.5 h-3.5" />
-                  <span>Pass Lesson Quiz to Unlock Level Exam</span>
-                </button>
-              )
+            {!isCompleted && !isInstructorUser ? (
+              <button
+                type="button"
+                onClick={scrollToModuleQuizWithPrompt}
+                className="px-4 py-2 rounded-lg text-xs font-bold bg-slate-200 hover:bg-slate-300 text-slate-700 border border-slate-300 flex items-center gap-2 cursor-pointer transition-colors"
+              >
+                <Lock className="w-3.5 h-3.5 text-amber-700" />
+                <span>Pass Module Quiz to Unlock Next Lesson</span>
+              </button>
+            ) : nextLesson &&
+              nextLesson.levelNumber > currentLesson.levelNumber &&
+              !currentLevelExamPassedAttempt &&
+              !isInstructorUser &&
+              onOpenLevelExam ? (
+              <button
+                type="button"
+                onClick={() => onOpenLevelExam(currentLesson.levelNumber)}
+                className="px-4 py-2 rounded-lg text-xs font-bold bg-emerald-700 hover:bg-emerald-600 text-white flex items-center gap-2 transition-colors cursor-pointer shadow-xs"
+              >
+                <span>
+                  Take Level {currentLesson.levelNumber} Final Exam to Unlock
+                  Level {nextLesson.levelNumber}
+                </span>
+                <ChevronRight className="w-4 h-4" />
+              </button>
             ) : (
               <button
                 type="button"

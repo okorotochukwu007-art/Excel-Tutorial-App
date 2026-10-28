@@ -3,21 +3,21 @@ import {
   X,
   ShieldCheck,
   Check,
-  CreditCard,
-  ExternalLink,
   RefreshCw,
   MessageCircle,
   Mail,
   KeyRound,
   ArrowLeft,
   CheckCircle2,
+  Copy,
+  Phone,
+  Building2,
 } from 'lucide-react';
 import { Course, Profile } from '../types/academy';
 import { isSupabaseClientConfigured, supabase } from '../lib/supabaseClient';
 import {
+  checkStudentEmailFullAccess,
   fetchOrCreateUserProfile,
-  initializePaystackPayment,
-  verifyPaystackPayment,
 } from '../services/academyService';
 
 export type AuthModalTab =
@@ -92,14 +92,12 @@ export const AuthAndCheckoutModal: React.FC<AuthModalProps> = ({
   const [showSupabaseUrlHelp, setShowSupabaseUrlHelp] = useState(false);
   const [copiedUrl, setCopiedUrl] = useState(false);
 
-  // Enrolment / Paystack state
+  // Enrolment / Bank Transfer state
   const [checkoutEmail, setCheckoutEmail] = useState(
     currentUserEmail && !currentUserEmail.endsWith('.local') ? currentUserEmail : ''
   );
-  const [paystackLoading, setPaystackLoading] = useState(false);
-  const [paystackAuthUrl, setPaystackAuthUrl] = useState<string | null>(null);
-  const [paystackRef, setPaystackRef] = useState('');
-  const [showRefVerifier, setShowRefVerifier] = useState(false);
+  const [checkingAccessStatus, setCheckingAccessStatus] = useState(false);
+  const [copiedAccountNum, setCopiedAccountNum] = useState(false);
   const [verifyFeedback, setVerifyFeedback] = useState<{
     ok: boolean;
     text: string;
@@ -175,76 +173,106 @@ export const AuthAndCheckoutModal: React.FC<AuthModalProps> = ({
     };
   }, [isOpen, tab, email, password, fullName, supabaseReady, isSubmitting, onAuthenticated, onClose]);
 
+  // Automatically poll for instructor-granted Full Access while on checkout tab
+  useEffect(() => {
+    if (!isOpen || tab !== 'checkout') return;
+    const cleanTargetEmail = (checkoutEmail || email || currentUserEmail || '')
+      .trim()
+      .toLowerCase();
+    if (!cleanTargetEmail || !cleanTargetEmail.includes('@') || cleanTargetEmail.endsWith('.local')) {
+      return;
+    }
+
+    let cancelled = false;
+    const isSignedInStudent = Boolean(
+      currentUserEmail &&
+        !currentUserEmail.endsWith('.local') &&
+        currentUserEmail.toLowerCase() === cleanTargetEmail
+    );
+
+    const checkNow = async () => {
+      try {
+        const res = await checkStudentEmailFullAccess(cleanTargetEmail, fullName);
+        if (!cancelled && res.ok && res.hasFullAccess) {
+          if (isSignedInStudent) {
+            setVerifyFeedback({
+              ok: true,
+              text: `Full Academy Access verified for ${cleanTargetEmail}! Levels 1–6 and all certification exams are now unlocked.`,
+            });
+            if (onPaymentVerified) {
+              onPaymentVerified();
+            }
+          } else {
+            setVerifyFeedback({
+              ok: true,
+              text: `Full Academy Access is active for ${cleanTargetEmail}! Please Sign Up first (if you haven't created your login password yet) or Log In with your password to enter the Academy.`,
+            });
+          }
+        }
+      } catch {
+        // Ignore transient polling errors
+      }
+    };
+
+    checkNow();
+    const timer = setInterval(checkNow, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [isOpen, tab, checkoutEmail, email, currentUserEmail, fullName, onPaymentVerified]);
+
   if (!isOpen) return null;
 
   const validateEmail = (val: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val);
 
-  const handleInitializePaystack = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleCheckBankTransferAccess = async () => {
+    const cleanTargetEmail = (checkoutEmail || email || currentUserEmail || '')
+      .trim()
+      .toLowerCase();
+    if (!validateEmail(cleanTargetEmail)) {
+      setVerifyFeedback({
+        ok: false,
+        text: 'Please enter your registered student email address above so we can check your access status.',
+      });
+      return;
+    }
+
+    const isSignedInStudent = Boolean(
+      currentUserEmail &&
+        !currentUserEmail.endsWith('.local') &&
+        currentUserEmail.toLowerCase() === cleanTargetEmail
+    );
+
+    setCheckingAccessStatus(true);
     setVerifyFeedback(null);
-    if (!validateEmail(checkoutEmail)) {
-      setVerifyFeedback({
-        ok: false,
-        text: 'Please enter a valid email address for your course receipt.',
-      });
-      return;
-    }
+    const res = await checkStudentEmailFullAccess(cleanTargetEmail, fullName);
+    setCheckingAccessStatus(false);
 
-    setPaystackLoading(true);
-    const res = await initializePaystackPayment({
-      email: checkoutEmail.trim(),
-      callbackUrl: window.location.origin,
-    });
-    setPaystackLoading(false);
-
-    if (!res.ok) {
-      setVerifyFeedback({
-        ok: false,
-        text: res.error || 'Could not initialize checkout. Please try again.',
-      });
-      return;
-    }
-
-    if (res.reference) {
-      setPaystackRef(res.reference);
-      setShowRefVerifier(true);
-    }
-    if (res.authorizationUrl) {
-      setPaystackAuthUrl(res.authorizationUrl);
-      setVerifyFeedback({
-        ok: true,
-        text: `Checkout ready (Ref: ${res.reference}). Click "Complete Payment on Paystack" below, then verify your reference once completed.`,
-      });
-    }
-  };
-
-  const handleVerifyReference = async () => {
-    if (!paystackRef.trim()) {
-      setVerifyFeedback({
-        ok: false,
-        text: 'Enter your Paystack transaction reference to verify.',
-      });
-      return;
-    }
-
-    setPaystackLoading(true);
-    const res = await verifyPaystackPayment(paystackRef.trim());
-    setPaystackLoading(false);
-
-    if (res.ok && res.verified) {
-      setVerifyFeedback({
-        ok: true,
-        text:
-          res.message ||
-          `Payment verified (${res.currency} ${res.amount?.toLocaleString()}). Full lifetime course access is now active!`,
-      });
-      if (onPaymentVerified) {
-        onPaymentVerified();
+    if (res.ok && res.hasFullAccess) {
+      if (isSignedInStudent) {
+        setVerifyFeedback({
+          ok: true,
+          text: `Full Academy Access confirmed for ${cleanTargetEmail}! All 6 Levels, downloadable workbooks, and final exams are now unlocked.`,
+        });
+        if (onPaymentVerified) {
+          onPaymentVerified();
+        }
+        onClose();
+      } else {
+        setEmail(cleanTargetEmail);
+        setInfoMsg(
+          `Full Academy Access is active for ${cleanTargetEmail}! Please Sign Up first to create your login details, or Log In with your password below.`
+        );
+        setVerifyFeedback({
+          ok: true,
+          text: `Full Academy Access is active for ${cleanTargetEmail}! Every student must Sign Up first to get their login details. Click "Sign Up" or "Log In" above with ${cleanTargetEmail} to access all 6 levels.`,
+        });
       }
     } else {
       setVerifyFeedback({
         ok: false,
-        text: res.error || 'Payment verification pending or reference not found.',
+        text: `Full access has not been activated for ${cleanTargetEmail} yet. Make sure you have signed up for your student account first, transfer ${course.currency} ${course.oneTimePrice.toLocaleString()} to Palmpay (7080145682 — Tochukwu Okoro), then click the WhatsApp button or call 07080145682 so the instructor can grant your email full access.`,
       });
     }
   };
@@ -494,6 +522,41 @@ export const AuthAndCheckoutModal: React.FC<AuthModalProps> = ({
     // Direct Lead Instructor Authentication check
     if (cleanEmail === 'okorotochukwu007@gmail.com') {
       if (password === 'Solution') {
+        if (supabaseReady && supabase) {
+          const sb = supabase;
+          (async () => {
+            try {
+              await fetch('/api/auth/register', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  email: 'okorotochukwu007@gmail.com',
+                  password: 'Solution',
+                  fullName: 'Tochukwu Okoro (Lead Instructor)',
+                }),
+              });
+              const { data: signInRes } = await sb.auth.signInWithPassword({
+                email: 'okorotochukwu007@gmail.com',
+                password: 'Solution',
+              });
+              if (signInRes?.user) {
+                await sb.from('profiles').upsert(
+                  {
+                    id: signInRes.user.id,
+                    email: 'okorotochukwu007@gmail.com',
+                    full_name: 'Tochukwu Okoro (Lead Instructor)',
+                    role: 'admin',
+                    updated_at: new Date().toISOString(),
+                  },
+                  { onConflict: 'id' }
+                );
+              }
+            } catch {
+              // Ignore background Supabase sync error
+            }
+          })();
+        }
+
         onAuthenticated({
           id: 'instructor-okoro-tochukwu',
           email: 'okorotochukwu007@gmail.com',
@@ -519,7 +582,7 @@ export const AuthAndCheckoutModal: React.FC<AuthModalProps> = ({
       return;
     }
     if (password.length < 8) {
-      setErrorMsg('Password must be at least 8 characters.');
+      setErrorMsg('Password must be at least 8 characters. Every student must Sign Up first to create their login details.');
       return;
     }
 
@@ -534,6 +597,18 @@ export const AuthAndCheckoutModal: React.FC<AuthModalProps> = ({
           confirmed: false,
           createdAt: new Date().toISOString().split('T')[0],
         });
+
+        // Immediately record student in local & server access registry so instructor sees them right away
+        checkStudentEmailFullAccess(cleanEmail, fullName.trim()).catch(() => {});
+        fetch('/api/auth/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: cleanEmail,
+            password,
+            fullName: fullName.trim(),
+          }),
+        }).catch(() => {});
 
         // Trigger Supabase signUp so the student receives a confirmation email
         if (supabaseReady && supabase) {
@@ -571,20 +646,31 @@ export const AuthAndCheckoutModal: React.FC<AuthModalProps> = ({
       return;
     }
 
-    // Login Flow
+    // Login Flow — every student must have signed up first
     if (!supabaseReady || !supabase) {
       const localUsers = loadLocalUsers();
       const matched = localUsers[cleanEmail];
-      if (matched && matched.password !== password) {
+      if (!matched) {
+        setErrorMsg(
+          'No student account found for this email. Every student must Sign Up first to create their login details.'
+        );
+        return;
+      }
+      if (matched.password !== password) {
         setErrorMsg('Incorrect password. Click "Forgot password?" if you need to reset it.');
         return;
       }
+      const resolvedName = matched.fullName || fullName.trim() || cleanEmail.split('@')[0];
+      const accessRes = await checkStudentEmailFullAccess(cleanEmail, resolvedName);
+      if (accessRes.ok && accessRes.hasFullAccess && onPaymentVerified) {
+        onPaymentVerified();
+      }
       onAuthenticated({
-        id: 'demo-student-local',
+        id: accessRes.hasFullAccess ? `enrolled-${cleanEmail}` : 'demo-student-local',
         email: cleanEmail,
-        fullName: matched?.fullName || fullName.trim() || cleanEmail.split('@')[0],
-        role: 'student_demo',
-        createdAt: matched?.createdAt || new Date().toISOString().split('T')[0],
+        fullName: resolvedName,
+        role: accessRes.hasFullAccess ? 'student_paid' : 'student_demo',
+        createdAt: matched.createdAt || new Date().toISOString().split('T')[0],
         isDemoSession: false,
       });
       onClose();
@@ -618,7 +704,7 @@ export const AuthAndCheckoutModal: React.FC<AuthModalProps> = ({
       if (error) {
         setErrorMsg(
           error.message.toLowerCase().includes('invalid login credentials')
-            ? 'Invalid email or password. If you forgot your password, click "Forgot password?" below.'
+            ? 'Invalid email or password. Every student must Sign Up first to get their login details, or click "Forgot password?" below to reset your password.'
             : error.message
         );
         setIsSubmitting(false);
@@ -1221,82 +1307,154 @@ export const AuthAndCheckoutModal: React.FC<AuthModalProps> = ({
                 </div>
               </div>
 
-              <form onSubmit={handleInitializePaystack} className="space-y-3">
-                <div className="space-y-1.5">
-                  <label
-                    htmlFor="paystack-email"
-                    className="block font-semibold text-slate-800"
-                  >
-                    Email Address for Enrolment
-                  </label>
-                  <input
-                    id="paystack-email"
-                    type="email"
-                    required
-                    value={checkoutEmail}
-                    onChange={(e) => setCheckoutEmail(e.target.value)}
-                    placeholder="name@email.com"
-                    className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-lg text-slate-900 text-sm focus:outline-none focus:border-emerald-700"
-                  />
+              {/* Official Bank Transfer Account Details Box */}
+              <div className="p-4 bg-emerald-950 text-white border border-emerald-800 rounded-xl space-y-3 shadow-md">
+                <div className="flex items-center justify-between border-b border-emerald-800/80 pb-2.5">
+                  <div className="flex items-center gap-2 text-emerald-300 font-mono text-[11px] font-bold uppercase tracking-wider">
+                    <Building2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                    <span>Direct Bank Transfer Details</span>
+                  </div>
+                  <span className="px-2 py-0.5 rounded bg-emerald-800/90 text-emerald-200 font-mono text-[10px] font-semibold">
+                    Instant Activation
+                  </span>
                 </div>
 
-                <button
-                  type="submit"
-                  disabled={paystackLoading}
-                  className="w-full py-3 px-4 bg-emerald-800 text-white font-semibold text-sm rounded-lg hover:bg-emerald-900 disabled:bg-slate-400 transition-colors flex items-center justify-center gap-2 cursor-pointer"
-                >
-                  <CreditCard className="w-4 h-4" />
-                  {paystackLoading
-                    ? 'Preparing Secure Checkout...'
-                    : `Pay ${course.currency} ${course.oneTimePrice.toLocaleString()} with Paystack`}
-                </button>
-              </form>
+                <div className="grid grid-cols-1 gap-2.5 text-xs">
+                  <div className="flex items-center justify-between bg-emerald-900/50 border border-emerald-800/80 rounded-lg px-3 py-2">
+                    <span className="text-emerald-200">Account Name:</span>
+                    <span className="font-bold text-white text-sm">Tochukwu Okoro</span>
+                  </div>
 
-              {paystackAuthUrl && (
-                <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl space-y-2.5">
-                  <a
-                    href={paystackAuthUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="w-full py-2.5 px-4 bg-slate-900 text-white font-semibold rounded-lg hover:bg-slate-800 flex items-center justify-center gap-2"
-                  >
-                    <span>Complete Payment on Paystack</span>
-                    <ExternalLink className="w-3.5 h-3.5" />
-                  </a>
+                  <div className="flex items-center justify-between bg-emerald-900/50 border border-emerald-800/80 rounded-lg px-3 py-2">
+                    <span className="text-emerald-200">Bank Name:</span>
+                    <span className="font-bold text-amber-300 text-sm">Palmpay</span>
+                  </div>
+
+                  <div className="flex items-center justify-between bg-emerald-900/50 border border-emerald-800/80 rounded-lg px-3 py-2">
+                    <div>
+                      <span className="text-emerald-200 block text-[11px]">Account Number:</span>
+                      <span className="font-mono font-black text-lg text-white tracking-wider">
+                        7080145682
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard?.writeText('7080145682');
+                        setCopiedAccountNum(true);
+                        setTimeout(() => setCopiedAccountNum(false), 2000);
+                      }}
+                      className="px-3 py-1.5 bg-white text-slate-900 hover:bg-emerald-100 font-bold rounded-lg text-[11px] flex items-center gap-1.5 transition-colors cursor-pointer shrink-0"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                      <span>{copiedAccountNum ? 'Copied!' : 'Copy Number'}</span>
+                    </button>
+                  </div>
+                </div>
+
+                <p className="text-[11px] text-emerald-200 leading-relaxed pt-0.5">
+                  Transfer <strong className="text-white">{course.currency} {course.oneTimePrice.toLocaleString()}</strong> to the Palmpay account above, then reach out to the instructor via WhatsApp or call <strong className="text-white">07080145682</strong> to confirm and unlock your full access immediately.
+                </p>
+              </div>
+
+              {/* Step 1 Reminder: Must Sign Up First */}
+              {(!currentUserEmail || currentUserEmail.endsWith('.local')) && (
+                <div className="p-3.5 bg-amber-50 border border-amber-300 rounded-xl space-y-2 text-amber-950">
+                  <div className="font-bold text-xs">
+                    Step 1: Sign Up First to Get Your Login Details
+                  </div>
+                  <p className="text-[11px] text-amber-900 leading-relaxed">
+                    Every student (whether on Free Level 1 or Enrolled Full Access) must <strong>Sign Up first</strong> with their email and password so your account appears on the Instructor Dashboard for Full Access activation.
+                  </p>
+                  <div className="flex items-center gap-2 pt-0.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setErrorMsg('');
+                        setInfoMsg('');
+                        setTab('register');
+                      }}
+                      className="px-3 py-1.5 bg-emerald-800 hover:bg-emerald-900 text-white font-bold rounded-lg text-[11px] cursor-pointer"
+                    >
+                      Sign Up First
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setErrorMsg('');
+                        setInfoMsg('');
+                        setTab('login');
+                      }}
+                      className="px-3 py-1.5 bg-white hover:bg-amber-100 text-slate-900 border border-amber-300 font-semibold rounded-lg text-[11px] cursor-pointer"
+                    >
+                      Already Signed Up? Log In
+                    </button>
+                  </div>
                 </div>
               )}
 
-              <div className="pt-2 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => setShowRefVerifier(!showRefVerifier)}
-                  className="text-slate-600 hover:text-slate-900 font-medium underline cursor-pointer"
+              {/* Student Email Input for Full Access Activation */}
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="enrolment-email"
+                  className="block font-semibold text-slate-800"
                 >
-                  {showRefVerifier
-                    ? 'Hide payment reference verification'
-                    : 'Already paid? Verify your payment reference'}
-                </button>
+                  Your Registered Student Email Address (to receive Full Access)
+                </label>
+                <input
+                  id="enrolment-email"
+                  type="email"
+                  required
+                  value={checkoutEmail}
+                  onChange={(e) => setCheckoutEmail(e.target.value)}
+                  placeholder="name@email.com"
+                  className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-lg text-slate-900 text-sm focus:outline-none focus:border-emerald-700"
+                />
+              </div>
 
-                {showRefVerifier && (
-                  <div className="mt-3 flex items-center gap-2">
-                    <input
-                      type="text"
-                      value={paystackRef}
-                      onChange={(e) => setPaystackRef(e.target.value)}
-                      placeholder="EXL-ACAD-..."
-                      className="flex-1 px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-900 font-mono text-xs"
+              {/* Post-Payment Confirmation Actions: WhatsApp & Call */}
+              <div className="space-y-2.5">
+                <a
+                  href={`https://wa.me/2347080145682?text=${encodeURIComponent(
+                    `Hello Instructor Tochukwu Okoro, I have made the ${course.currency} ${course.oneTimePrice.toLocaleString()} bank transfer to Palmpay (7080145682 — Tochukwu Okoro) for Full Academy Access.${
+                      checkoutEmail.trim()
+                        ? ` My student email is: ${checkoutEmail.trim()}.`
+                        : ''
+                    } Please confirm and grant my account full access.`
+                  )}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-full py-3 px-4 bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs sm:text-sm rounded-xl transition-colors flex items-center justify-center gap-2 shadow-sm cursor-pointer"
+                >
+                  <MessageCircle className="w-4 h-4 fill-current shrink-0" />
+                  <span>Confirm Payment on WhatsApp (07080145682)</span>
+                </a>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <a
+                    href="tel:07080145682"
+                    className="py-2.5 px-3 bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs rounded-xl transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <Phone className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                    <span>Call 07080145682 for Access</span>
+                  </a>
+
+                  <button
+                    type="button"
+                    disabled={checkingAccessStatus}
+                    onClick={handleCheckBankTransferAccess}
+                    className="py-2.5 px-3 bg-slate-100 hover:bg-slate-200 text-slate-900 border border-slate-300 font-semibold text-xs rounded-xl transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <RefreshCw
+                      className={`w-3.5 h-3.5 ${
+                        checkingAccessStatus ? 'animate-spin' : ''
+                      }`}
                     />
-                    <button
-                      type="button"
-                      disabled={paystackLoading}
-                      onClick={handleVerifyReference}
-                      className="px-3.5 py-2 bg-slate-900 text-white font-semibold rounded-lg hover:bg-emerald-800 flex items-center gap-1.5 cursor-pointer"
-                    >
-                      <RefreshCw className="w-3.5 h-3.5" />
-                      <span>Verify</span>
-                    </button>
-                  </div>
-                )}
+                    <span>
+                      {checkingAccessStatus ? 'Checking...' : 'Check My Access Status'}
+                    </span>
+                  </button>
+                </div>
               </div>
 
               {verifyFeedback && (
@@ -1313,7 +1471,7 @@ export const AuthAndCheckoutModal: React.FC<AuthModalProps> = ({
 
               <div className="flex items-center justify-center gap-1.5 text-slate-500 pt-1">
                 <ShieldCheck className="w-4 h-4 text-emerald-700" />
-                <span>Secured by Paystack · Instant lifetime activation</span>
+                <span>Verified Bank Transfer · Palmpay (7080145682 — Tochukwu Okoro)</span>
               </div>
             </div>
           )}
@@ -1335,10 +1493,10 @@ export const LegalAndContactModal: React.FC<LegalModalProps> = ({ docType, onClo
     contact: {
       title: 'Student Support & Instructor Help',
       body: [
-        'Lead Instructor: Okoro Tochuwku',
+        'Lead Instructor: Tochukwu Okoro',
         'Official Support Email: okorotochukwu007@gmail.com',
-        'Direct WhatsApp Helpline: 07080145682 (+234 708 014 5682)',
-        'Academy Campus / Office Address: Victoria Island & Ikeja Tech Hub, Lagos, Nigeria',
+        'Direct WhatsApp & Call Helpline: 07080145682 (+234 708 014 5682)',
+        'Official Tuition Bank Account: Tochukwu Okoro · Palmpay · 7080145682',
         'Support Hours: Monday – Saturday, 08:00 – 18:00 WAT',
       ],
       whatsappButton: true,
@@ -1347,7 +1505,7 @@ export const LegalAndContactModal: React.FC<LegalModalProps> = ({ docType, onClo
       title: 'Privacy Policy',
       body: [
         '1. Account & Progress Data: We store your name, email address, completed lessons, quiz scores, and capstone progress securely in our database.',
-        '2. Payment Security: All tuition transactions are securely encrypted and processed by Paystack. We never store credit card or bank details.',
+        '2. Payment Verification: Tuition payments are made via direct bank transfer to Tochukwu Okoro (Palmpay: 7080145682) and verified directly by the Lead Instructor.',
         '3. Data Isolation: Private user profile encryption and Row Level Security ensure your learning data remains completely private.',
       ],
       whatsappButton: false,

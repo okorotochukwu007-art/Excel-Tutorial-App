@@ -201,6 +201,13 @@ export async function fetchOrCreateUserProfile(
   email: string,
   fullName?: string
 ): Promise<Profile | null> {
+  const cleanEmail = (email || '').trim().toLowerCase();
+  const fallbackName = fullName || cleanEmail.split('@')[0] || 'Student';
+
+  if (cleanEmail && cleanEmail.includes('@') && !cleanEmail.endsWith('.local')) {
+    checkStudentEmailFullAccess(cleanEmail, fallbackName).catch(() => {});
+  }
+
   if (!supabase) return null;
 
   const { data: existing, error: selectErr } = await supabase
@@ -210,24 +217,28 @@ export async function fetchOrCreateUserProfile(
     .maybeSingle();
 
   if (!selectErr && existing) {
+    const resolvedName = existing.full_name || fallbackName;
+    if (cleanEmail && cleanEmail.includes('@') && !cleanEmail.endsWith('.local')) {
+      checkStudentEmailFullAccess(cleanEmail, resolvedName).catch(() => {});
+    }
     return {
       id: existing.id,
       email: existing.email,
-      fullName: existing.full_name || email.split('@')[0],
+      fullName: resolvedName,
       role: existing.role === 'admin' ? 'admin_demo' : 'student_demo',
       createdAt: existing.created_at,
       isDemoSession: false,
     };
   }
 
-  const fallbackName = fullName || email.split('@')[0];
   const { data: inserted, error: insertErr } = await supabase
     .from('profiles')
     .upsert(
       {
         id: userId,
-        email,
+        email: cleanEmail || email,
         full_name: fallbackName,
+        role: cleanEmail === 'okorotochukwu007@gmail.com' ? 'admin' : 'student',
       },
       { onConflict: 'id' }
     )
@@ -237,9 +248,9 @@ export async function fetchOrCreateUserProfile(
   if (insertErr || !inserted) {
     return {
       id: userId,
-      email,
+      email: cleanEmail || email,
       fullName: fallbackName,
-      role: 'student_demo',
+      role: cleanEmail === 'okorotochukwu007@gmail.com' ? 'admin_demo' : 'student_demo',
       createdAt: new Date().toISOString(),
       isDemoSession: false,
     };
@@ -255,60 +266,279 @@ export async function fetchOrCreateUserProfile(
   };
 }
 
-export async function loadStudentProgressFromSupabase(userId: string): Promise<{
+export interface StudentProgressSnapshot {
   completedLessonIds: string[];
   quizAttempts: QuizAttempt[];
   projectSubmissions: Record<string, ProjectSubmissionState>;
-}> {
-  if (!supabase) {
-    return { completedLessonIds: [], quizAttempts: [], projectSubmissions: {} };
+  activeLessonId?: string | null;
+  recentlyViewedLessonId?: string | null;
+  hasFullAccess?: boolean;
+}
+
+const LOCAL_STUDENT_PROGRESS_PREFIX = 'excel_academy_student_progress_v2:';
+
+function getProgressStorageKeys(userId?: string, email?: string): string[] {
+  const keys: string[] = [];
+  const cleanEmail = (email || '').trim().toLowerCase();
+  const cleanId = (userId || '').trim();
+  if (cleanEmail && !cleanEmail.endsWith('.local')) {
+    keys.push(`${LOCAL_STUDENT_PROGRESS_PREFIX}email:${cleanEmail}`);
+  }
+  if (cleanId && cleanId !== 'demo-student-01') {
+    keys.push(`${LOCAL_STUDENT_PROGRESS_PREFIX}id:${cleanId}`);
+  }
+  return keys;
+}
+
+export function mergeStudentProgress(
+  base: StudentProgressSnapshot,
+  incoming: Partial<StudentProgressSnapshot>
+): StudentProgressSnapshot {
+  const completedLessonIds = Array.from(
+    new Set([
+      ...(Array.isArray(base.completedLessonIds) ? base.completedLessonIds : []),
+      ...(Array.isArray(incoming.completedLessonIds) ? incoming.completedLessonIds : []),
+    ])
+  );
+
+  const combinedAttempts = [
+    ...(Array.isArray(incoming.quizAttempts) ? incoming.quizAttempts : []),
+    ...(Array.isArray(base.quizAttempts) ? base.quizAttempts : []),
+  ];
+  const seenAttemptKeys = new Set<string>();
+  const quizAttempts: QuizAttempt[] = [];
+  for (const att of combinedAttempts) {
+    if (!att || !att.quizId) continue;
+    const key = `${att.quizId}:${att.scorePercent}:${att.passed}`;
+    if (!seenAttemptKeys.has(key)) {
+      seenAttemptKeys.add(key);
+      quizAttempts.push(att);
+    }
   }
 
-  const [progressRes, quizRes, projRes] = await Promise.all([
-    supabase
-      .from('lesson_progress')
-      .select('lesson_id, completed')
-      .eq('user_id', userId)
-      .eq('completed', true),
-    supabase
-      .from('quiz_attempts')
-      .select('*')
-      .eq('user_id', userId)
-      .order('attempted_at', { ascending: false }),
-    supabase
-      .from('project_submissions')
-      .select('*')
-      .eq('user_id', userId),
-  ]);
+  const projectSubmissions: Record<string, ProjectSubmissionState> = {
+    ...(base.projectSubmissions || {}),
+  };
+  if (incoming.projectSubmissions && typeof incoming.projectSubmissions === 'object') {
+    for (const [projId, sub] of Object.entries(incoming.projectSubmissions)) {
+      const existing = projectSubmissions[projId];
+      const rawStatus = String(sub.status || '');
+      if (
+        !existing ||
+        rawStatus === 'completed_local' ||
+        rawStatus === 'completed' ||
+        (sub.completedChecklistItems?.length || 0) >=
+          (existing.completedChecklistItems?.length || 0)
+      ) {
+        projectSubmissions[projId] = {
+          ...sub,
+          status:
+            rawStatus === 'completed' || rawStatus === 'completed_local'
+              ? 'completed_local'
+              : sub.status,
+        };
+      }
+    }
+  }
 
-  const completedLessonIds = (progressRes.data || []).map((r) => r.lesson_id);
+  return {
+    completedLessonIds,
+    quizAttempts,
+    projectSubmissions,
+    activeLessonId: incoming.activeLessonId || base.activeLessonId || null,
+    recentlyViewedLessonId:
+      incoming.recentlyViewedLessonId || base.recentlyViewedLessonId || null,
+    hasFullAccess:
+      incoming.hasFullAccess !== undefined
+        ? incoming.hasFullAccess
+        : base.hasFullAccess,
+  };
+}
 
-  const quizAttempts: QuizAttempt[] = (quizRes.data || []).map((r) => ({
-    id: r.id,
-    quizId: r.quiz_id,
-    lessonTitle: r.lesson_title,
-    scorePercent: r.score_percent,
-    passed: r.passed,
-    totalQuestions: r.total_questions,
-    correctCount: r.correct_count,
-    attemptedAt: new Date(r.attempted_at).toLocaleString(),
-    isSimulatedLocal: false,
-  }));
+export function loadLocalStudentProgress(
+  userId?: string,
+  email?: string
+): StudentProgressSnapshot {
+  let merged: StudentProgressSnapshot = {
+    completedLessonIds: [],
+    quizAttempts: [],
+    projectSubmissions: {},
+    activeLessonId: null,
+    recentlyViewedLessonId: null,
+  };
+  if (typeof window === 'undefined') return merged;
 
-  const projectSubmissions: Record<string, ProjectSubmissionState> = {};
-  (projRes.data || []).forEach((r) => {
-    projectSubmissions[r.project_id] = {
-      projectId: r.project_id,
-      completedChecklistItems: Array.isArray(r.completed_checklist_items)
-        ? r.completed_checklist_items
-        : [],
-      notes: r.notes || '',
-      status: r.status || 'in_progress',
-      updatedAt: r.updated_at,
-    };
-  });
+  const keys = getProgressStorageKeys(userId, email);
+  for (const key of keys) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          merged = mergeStudentProgress(merged, parsed);
+        }
+      }
+    } catch {
+      // Ignore corrupt storage entries
+    }
+  }
+  return merged;
+}
 
-  return { completedLessonIds, quizAttempts, projectSubmissions };
+export function saveLocalStudentProgress(
+  userId: string | undefined,
+  email: string | undefined,
+  snapshot: StudentProgressSnapshot
+): StudentProgressSnapshot {
+  const existing = loadLocalStudentProgress(userId, email);
+  const merged = mergeStudentProgress(existing, snapshot);
+  if (typeof window !== 'undefined') {
+    const keys = getProgressStorageKeys(userId, email);
+    for (const key of keys) {
+      try {
+        localStorage.setItem(key, JSON.stringify(merged));
+      } catch {
+        // Ignore storage quota errors
+      }
+    }
+  }
+  return merged;
+}
+
+export async function saveFullStudentProgressSnapshot(
+  userId: string,
+  email: string,
+  snapshot: StudentProgressSnapshot
+): Promise<StudentProgressSnapshot> {
+  const mergedLocal = saveLocalStudentProgress(userId, email, snapshot);
+  try {
+    const res = await fetch('/api/student/progress/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userId,
+        email,
+        ...mergedLocal,
+      }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data?.ok && data?.progress) {
+        return saveLocalStudentProgress(userId, email, data.progress);
+      }
+    }
+  } catch {
+    // Offline or static fallback — local storage already saved
+  }
+  return mergedLocal;
+}
+
+export async function loadStudentProgressFromSupabase(
+  userId: string,
+  email?: string
+): Promise<StudentProgressSnapshot> {
+  let combined = loadLocalStudentProgress(userId, email);
+
+  // 1. Load from server endpoint (Supabase Auth user_metadata.academy_progress + tables)
+  try {
+    const serverRes = await fetch('/api/student/progress/load', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId, email }),
+    });
+    if (serverRes.ok) {
+      const serverData = await serverRes.json();
+      if (serverData?.ok) {
+        combined = mergeStudentProgress(combined, {
+          completedLessonIds: serverData.completedLessonIds || [],
+          quizAttempts: serverData.quizAttempts || [],
+          projectSubmissions: serverData.projectSubmissions || {},
+          activeLessonId: serverData.activeLessonId || null,
+          recentlyViewedLessonId: serverData.recentlyViewedLessonId || null,
+          hasFullAccess:
+            typeof serverData.hasFullAccess === 'boolean'
+              ? serverData.hasFullAccess
+              : undefined,
+        });
+      }
+    }
+  } catch {
+    // Ignore network errors and continue
+  }
+
+  // 2. Also query client-side Supabase tables if configured and userId is a UUID
+  const isUuid =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      userId
+    );
+  if (supabase && isUuid) {
+    try {
+      const [progressRes, quizRes, projRes] = await Promise.all([
+        supabase
+          .from('lesson_progress')
+          .select('lesson_id, completed')
+          .eq('user_id', userId)
+          .eq('completed', true),
+        supabase
+          .from('quiz_attempts')
+          .select('*')
+          .eq('user_id', userId)
+          .order('attempted_at', { ascending: false }),
+        supabase
+          .from('project_submissions')
+          .select('*')
+          .eq('user_id', userId),
+      ]);
+
+      const completedLessonIds = (progressRes.data || []).map((r) => r.lesson_id);
+
+      const quizAttempts: QuizAttempt[] = (quizRes.data || []).map((r) => ({
+        id: r.id,
+        quizId: r.quiz_id,
+        lessonTitle: r.lesson_title,
+        scorePercent: r.score_percent,
+        passed: r.passed,
+        totalQuestions: r.total_questions,
+        correctCount: r.correct_count,
+        attemptedAt: new Date(r.attempted_at).toLocaleString(),
+        isSimulatedLocal: false,
+      }));
+
+      const projectSubmissions: Record<string, ProjectSubmissionState> = {};
+      (projRes.data || []).forEach((r) => {
+        projectSubmissions[r.project_id] = {
+          projectId: r.project_id,
+          completedChecklistItems: Array.isArray(r.completed_checklist_items)
+            ? r.completed_checklist_items
+            : [],
+          notes: r.notes || '',
+          status:
+            r.status === 'completed' ? 'completed_local' : r.status || 'in_progress',
+          updatedAt: r.updated_at,
+        };
+      });
+
+      combined = mergeStudentProgress(combined, {
+        completedLessonIds,
+        quizAttempts,
+        projectSubmissions,
+      });
+    } catch {
+      // Ignore client-side table errors
+    }
+  }
+
+  // Persist merged result back to local storage and server so nothing is ever lost
+  saveLocalStudentProgress(userId, email, combined);
+  if (
+    combined.completedLessonIds.length > 0 ||
+    combined.quizAttempts.length > 0 ||
+    Object.keys(combined.projectSubmissions).length > 0
+  ) {
+    saveFullStudentProgressSnapshot(userId, email || '', combined).catch(() => {});
+  }
+
+  return combined;
 }
 
 export async function syncLessonCompletionToSupabase(
@@ -671,57 +901,536 @@ export async function fetchStudentPurchases(): Promise<{
   }
 }
 
+export interface AppAccessUserRecord {
+  email: string;
+  fullName: string;
+  role: 'admin' | 'student';
+  hasFullAccess: boolean;
+  grantedAt: string | null;
+  grantedBy: string | null;
+  paymentMethod: string | null;
+  createdAt: string;
+  lastSeenAt: string;
+  completedLessonsCount: number;
+}
+
+const LOCAL_ACCESS_REGISTRY_KEY = 'excel_academy_access_registry_v1';
+const LOCAL_USERS_STORAGE_KEY = 'excel_academy_local_users_v1';
+const INSTRUCTOR_MASTER_KEY_HEADER = 'OKORO-EXCEL-CHIEF-2026';
+
+function loadLocalAccessRegistry(): Record<string, AppAccessUserRecord> {
+  const defaultAdmin: AppAccessUserRecord = {
+    email: 'okorotochukwu007@gmail.com',
+    fullName: 'Tochukwu Okoro (Lead Instructor)',
+    role: 'admin',
+    hasFullAccess: true,
+    grantedAt: '2026-10-23T08:00:00.000Z',
+    grantedBy: 'System (Lead Instructor)',
+    paymentMethod: 'Instructor Master Account',
+    createdAt: '2026-10-23',
+    lastSeenAt: new Date().toISOString(),
+    completedLessonsCount: 108,
+  };
+
+  if (typeof window === 'undefined') {
+    return { 'okorotochukwu007@gmail.com': defaultAdmin };
+  }
+
+  let registry: Record<string, AppAccessUserRecord> = {
+    'okorotochukwu007@gmail.com': defaultAdmin,
+  };
+
+  try {
+    const raw = localStorage.getItem(LOCAL_ACCESS_REGISTRY_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        registry = { ...parsed, ...registry };
+      }
+    }
+  } catch {}
+
+  const mergeDiscoveredStudent = (params: {
+    email?: string;
+    fullName?: string;
+    createdAt?: string;
+    completedCount?: number;
+    hasFullAccess?: boolean;
+  }) => {
+    const cleanEmail = (params.email || '').trim().toLowerCase();
+    if (!cleanEmail || !cleanEmail.includes('@') || cleanEmail.endsWith('.local')) {
+      return;
+    }
+    const existing = registry[cleanEmail];
+    const localProg = loadLocalStudentProgress(undefined, cleanEmail);
+    const isAdminEmail = cleanEmail === 'okorotochukwu007@gmail.com';
+    const nextFullAccess = isAdminEmail
+      ? true
+      : Boolean(
+          params.hasFullAccess ||
+            existing?.hasFullAccess ||
+            localProg.hasFullAccess
+        );
+
+    registry[cleanEmail] = {
+      email: cleanEmail,
+      fullName:
+        params.fullName?.trim() ||
+        existing?.fullName ||
+        (isAdminEmail
+          ? 'Tochukwu Okoro (Lead Instructor)'
+          : cleanEmail.split('@')[0]),
+      role: isAdminEmail ? 'admin' : existing?.role || 'student',
+      hasFullAccess: nextFullAccess,
+      grantedAt: existing?.grantedAt || (nextFullAccess ? new Date().toISOString() : null),
+      grantedBy:
+        existing?.grantedBy ||
+        (nextFullAccess ? 'Tochukwu Okoro (Lead Instructor)' : null),
+      paymentMethod:
+        existing?.paymentMethod ||
+        (nextFullAccess ? 'Bank Transfer (Palmpay - 7080145682)' : null),
+      createdAt:
+        params.createdAt ||
+        existing?.createdAt ||
+        new Date().toISOString().split('T')[0],
+      lastSeenAt: existing?.lastSeenAt || new Date().toISOString(),
+      completedLessonsCount: Math.max(
+        existing?.completedLessonsCount || 0,
+        params.completedCount || 0,
+        localProg.completedLessonIds.length
+      ),
+    };
+  };
+
+  // 1. Merge locally registered student accounts from AuthAndCheckoutModal
+  try {
+    const rawUsers = localStorage.getItem(LOCAL_USERS_STORAGE_KEY);
+    if (rawUsers) {
+      const parsedUsers = JSON.parse(rawUsers);
+      if (parsedUsers && typeof parsedUsers === 'object') {
+        for (const [k, u] of Object.entries(parsedUsers) as [string, any][]) {
+          mergeDiscoveredStudent({
+            email: u?.email || k,
+            fullName: u?.fullName,
+            createdAt: u?.createdAt,
+          });
+        }
+      }
+    }
+  } catch {}
+
+  // 2. Merge active profile if present
+  try {
+    const rawActive = localStorage.getItem('excel_academy_active_profile_v1');
+    if (rawActive) {
+      const parsedActive = JSON.parse(rawActive);
+      if (parsedActive && parsedActive.email && !parsedActive.isDemoSession) {
+        mergeDiscoveredStudent({
+          email: parsedActive.email,
+          fullName: parsedActive.fullName,
+          createdAt: parsedActive.createdAt,
+        });
+      }
+    }
+  } catch {}
+
+  // 3. Scan all localStorage keys for any student progress snapshots (excel_academy_student_progress_v2:email:<email>)
+  try {
+    const emailPrefix = `${LOCAL_STUDENT_PROGRESS_PREFIX}email:`;
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith(emailPrefix)) {
+        const extractedEmail = key.slice(emailPrefix.length).trim().toLowerCase();
+        if (extractedEmail && extractedEmail.includes('@')) {
+          mergeDiscoveredStudent({ email: extractedEmail });
+        }
+      }
+    }
+  } catch {}
+
+  return registry;
+}
+
+function saveLocalAccessRegistry(registry: Record<string, AppAccessUserRecord>) {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(LOCAL_ACCESS_REGISTRY_KEY, JSON.stringify(registry));
+  } catch {}
+}
+
+export function isEmailGrantedFullAccessLocally(email?: string): boolean {
+  const cleanEmail = (email || '').trim().toLowerCase();
+  if (!cleanEmail) return false;
+  if (cleanEmail === 'okorotochukwu007@gmail.com') return true;
+  const reg = loadLocalAccessRegistry();
+  return Boolean(reg[cleanEmail]?.hasFullAccess);
+}
+
+export async function checkStudentEmailFullAccess(
+  email: string,
+  fullName?: string
+): Promise<{
+  ok: boolean;
+  email: string;
+  hasFullAccess: boolean;
+  grantedAt?: string | null;
+  paymentMethod?: string | null;
+}> {
+  const cleanEmail = (email || '').trim().toLowerCase();
+  if (!cleanEmail || !cleanEmail.includes('@')) {
+    return { ok: false, email: '', hasFullAccess: false };
+  }
+
+  // Ensure local registry records this user
+  const localReg = loadLocalAccessRegistry();
+  const existingLocal = localReg[cleanEmail];
+  const localProg = loadLocalStudentProgress(undefined, cleanEmail);
+  localReg[cleanEmail] = {
+    email: cleanEmail,
+    fullName: fullName?.trim() || existingLocal?.fullName || cleanEmail.split('@')[0],
+    role: cleanEmail === 'okorotochukwu007@gmail.com' ? 'admin' : existingLocal?.role || 'student',
+    hasFullAccess:
+      cleanEmail === 'okorotochukwu007@gmail.com'
+        ? true
+        : Boolean(existingLocal?.hasFullAccess),
+    grantedAt: existingLocal?.grantedAt || null,
+    grantedBy: existingLocal?.grantedBy || null,
+    paymentMethod: existingLocal?.paymentMethod || null,
+    createdAt: existingLocal?.createdAt || new Date().toISOString().split('T')[0],
+    lastSeenAt: new Date().toISOString(),
+    completedLessonsCount: Math.max(
+      existingLocal?.completedLessonsCount || 0,
+      localProg.completedLessonIds.length
+    ),
+  };
+  saveLocalAccessRegistry(localReg);
+
+  try {
+    const res = await fetch('/api/access/check', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: cleanEmail, fullName }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const serverGranted = Boolean(data?.hasFullAccess);
+      const combinedGranted =
+        serverGranted || Boolean(localReg[cleanEmail]?.hasFullAccess);
+
+      if (combinedGranted) {
+        localReg[cleanEmail] = {
+          ...localReg[cleanEmail],
+          hasFullAccess: true,
+          grantedAt:
+            data?.grantedAt ||
+            localReg[cleanEmail]?.grantedAt ||
+            new Date().toISOString(),
+          paymentMethod:
+            data?.paymentMethod ||
+            localReg[cleanEmail]?.paymentMethod ||
+            'Bank Transfer (Palmpay - 7080145682)',
+        };
+        saveLocalAccessRegistry(localReg);
+      }
+
+      return {
+        ok: true,
+        email: cleanEmail,
+        hasFullAccess: combinedGranted,
+        grantedAt: localReg[cleanEmail]?.grantedAt,
+        paymentMethod: localReg[cleanEmail]?.paymentMethod,
+      };
+    }
+  } catch {
+    // Fallback to local registry
+  }
+
+  return {
+    ok: true,
+    email: cleanEmail,
+    hasFullAccess: Boolean(localReg[cleanEmail]?.hasFullAccess),
+    grantedAt: localReg[cleanEmail]?.grantedAt,
+    paymentMethod: localReg[cleanEmail]?.paymentMethod,
+  };
+}
+
+export async function fetchAdminAppAccessUsers(): Promise<{
+  ok: boolean;
+  users: AppAccessUserRecord[];
+  error?: string;
+}> {
+  const localReg = loadLocalAccessRegistry();
+
+  // Also query client-side Supabase profiles if configured so no database student is missed
+  let token: string | undefined;
+  if (supabase) {
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      token = sessionData.session?.access_token;
+
+      const { data: clientProfiles } = await supabase
+        .from('profiles')
+        .select('id, email, full_name, role, created_at');
+      if (Array.isArray(clientProfiles)) {
+        for (const p of clientProfiles) {
+          const cleanEmail = (p.email || '').trim().toLowerCase();
+          if (!cleanEmail || !cleanEmail.includes('@')) continue;
+          const existing = localReg[cleanEmail];
+          localReg[cleanEmail] = {
+            email: cleanEmail,
+            fullName: p.full_name || existing?.fullName || cleanEmail.split('@')[0],
+            role:
+              cleanEmail === 'okorotochukwu007@gmail.com'
+                ? 'admin'
+                : existing?.role || 'student',
+            hasFullAccess:
+              cleanEmail === 'okorotochukwu007@gmail.com'
+                ? true
+                : Boolean(existing?.hasFullAccess),
+            grantedAt: existing?.grantedAt || null,
+            grantedBy: existing?.grantedBy || null,
+            paymentMethod: existing?.paymentMethod || null,
+            createdAt:
+              (p.created_at ? String(p.created_at).split('T')[0] : '') ||
+              existing?.createdAt ||
+              new Date().toISOString().split('T')[0],
+            lastSeenAt: existing?.lastSeenAt || new Date().toISOString(),
+            completedLessonsCount: existing?.completedLessonsCount || 0,
+          };
+        }
+      }
+    } catch {
+      // Ignore client-side Supabase profile query error
+    }
+  }
+
+  const knownUsers = Object.values(localReg).map((u) => ({
+    email: u.email,
+    fullName: u.fullName,
+    createdAt: u.createdAt,
+    completedLessonsCount: u.completedLessonsCount,
+    hasFullAccess: u.hasFullAccess,
+  }));
+
+  try {
+    const res = await fetch('/api/admin/access-users', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-instructor-master-key': INSTRUCTOR_MASTER_KEY_HEADER,
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ knownUsers }),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      if (data?.ok && Array.isArray(data.users)) {
+        const mergedMap: Record<string, AppAccessUserRecord> = { ...localReg };
+        for (const srvUser of data.users as AppAccessUserRecord[]) {
+          const clean = (srvUser.email || '').trim().toLowerCase();
+          if (!clean) continue;
+          const loc = mergedMap[clean];
+          mergedMap[clean] = {
+            ...srvUser,
+            hasFullAccess: Boolean(srvUser.hasFullAccess || loc?.hasFullAccess),
+            completedLessonsCount: Math.max(
+              srvUser.completedLessonsCount || 0,
+              loc?.completedLessonsCount || 0
+            ),
+          };
+        }
+        saveLocalAccessRegistry(mergedMap);
+        const sorted = Object.values(mergedMap).sort((a, b) => {
+          if (a.role === 'admin' && b.role !== 'admin') return -1;
+          if (a.role !== 'admin' && b.role === 'admin') return 1;
+          if (a.hasFullAccess !== b.hasFullAccess) return a.hasFullAccess ? -1 : 1;
+          return (b.lastSeenAt || '').localeCompare(a.lastSeenAt || '');
+        });
+        return { ok: true, users: sorted };
+      }
+    }
+  } catch {
+    // Fallback to local registry
+  }
+
+  saveLocalAccessRegistry(localReg);
+  const fallbackUsers = Object.values(localReg).sort((a, b) => {
+    if (a.role === 'admin' && b.role !== 'admin') return -1;
+    if (a.role !== 'admin' && b.role === 'admin') return 1;
+    if (a.hasFullAccess !== b.hasFullAccess) return a.hasFullAccess ? -1 : 1;
+    return (b.lastSeenAt || '').localeCompare(a.lastSeenAt || '');
+  });
+  return { ok: true, users: fallbackUsers };
+}
+
+export async function grantOrRevokeEmailFullAccess(payload: {
+  email: string;
+  fullName?: string;
+  grant?: boolean;
+}): Promise<{
+  ok: boolean;
+  user?: AppAccessUserRecord;
+  users?: AppAccessUserRecord[];
+  message?: string;
+  error?: string;
+}> {
+  const cleanEmail = (payload.email || '').trim().toLowerCase();
+  if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+    return {
+      ok: false,
+      error: 'Please enter a valid student email address.',
+    };
+  }
+
+  const grant = payload.grant !== false;
+  const nowIso = new Date().toISOString();
+
+  // Always update local registry immediately as well
+  const localReg = loadLocalAccessRegistry();
+  const existing = localReg[cleanEmail];
+  const updatedLocal: AppAccessUserRecord = {
+    email: cleanEmail,
+    fullName:
+      payload.fullName?.trim() ||
+      existing?.fullName ||
+      cleanEmail.split('@')[0],
+    role: cleanEmail === 'okorotochukwu007@gmail.com' ? 'admin' : existing?.role || 'student',
+    hasFullAccess: cleanEmail === 'okorotochukwu007@gmail.com' ? true : grant,
+    grantedAt: grant ? nowIso : null,
+    grantedBy: grant ? 'Tochukwu Okoro (Lead Instructor)' : null,
+    paymentMethod: grant ? 'Bank Transfer (Palmpay - 7080145682)' : null,
+    createdAt: existing?.createdAt || nowIso.split('T')[0],
+    lastSeenAt: nowIso,
+    completedLessonsCount: existing?.completedLessonsCount || 0,
+  };
+  localReg[cleanEmail] = updatedLocal;
+  saveLocalAccessRegistry(localReg);
+
+  try {
+    let token: string | undefined;
+    if (supabase) {
+      const { data } = await supabase.auth.getSession();
+      token = data.session?.access_token;
+    }
+
+    const res = await fetch('/api/admin/grant-access', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-instructor-master-key': INSTRUCTOR_MASTER_KEY_HEADER,
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({
+        email: cleanEmail,
+        fullName: payload.fullName?.trim(),
+        grant,
+      }),
+    });
+
+    const data = await res.json();
+    if (res.ok && data?.ok) {
+      if (Array.isArray(data.users)) {
+        const syncedMap: Record<string, AppAccessUserRecord> = { ...localReg };
+        for (const u of data.users as AppAccessUserRecord[]) {
+          syncedMap[u.email.toLowerCase()] = u;
+        }
+        saveLocalAccessRegistry(syncedMap);
+      }
+      return {
+        ok: true,
+        user: data.user || updatedLocal,
+        users: data.users || Object.values(localReg),
+        message:
+          data.message ||
+          (grant
+            ? `Full 6-Level Academy Access has been granted to ${cleanEmail}!`
+            : `Full Academy Access has been revoked for ${cleanEmail}.`),
+      };
+    }
+  } catch {
+    // Fallback to local registry update
+  }
+
+  return {
+    ok: true,
+    user: updatedLocal,
+    users: Object.values(localReg),
+    message: grant
+      ? `Full 6-Level Academy Access has been granted to ${cleanEmail}!`
+      : `Full Academy Access has been revoked for ${cleanEmail}.`,
+  };
+}
+
 export async function fetchAdminRecords(): Promise<{
   ok: boolean;
   students: AdminStudentRecord[];
   purchases: PurchaseRecord[];
   error?: string;
 }> {
+  const accessRes = await fetchAdminAppAccessUsers();
+  const studentMap = new Map<string, AdminStudentRecord>();
+
+  accessRes.users.forEach((u, idx) => {
+    const clean = u.email.toLowerCase();
+    studentMap.set(clean, {
+      id: `student-${idx}-${clean}`,
+      email: u.email,
+      fullName: u.fullName,
+      role: u.role,
+      createdAt: u.createdAt,
+      completedLessonsCount: u.completedLessonsCount,
+      hasVerifiedPurchase: u.hasFullAccess || u.role === 'admin',
+    });
+  });
+
+  let purchases: PurchaseRecord[] = [];
+
   try {
-    if (!supabase) {
-      return {
-        ok: false,
-        students: [],
-        purchases: [],
-        error: 'Supabase client is not configured yet.',
-      };
-    }
-    const { data } = await supabase.auth.getSession();
-    const token = data.session?.access_token;
-    if (!token) {
-      return {
-        ok: false,
-        students: [],
-        purchases: [],
-        error: 'Sign in with an administrator account to load live records.',
-      };
+    let token: string | undefined;
+    if (supabase) {
+      const { data } = await supabase.auth.getSession();
+      token = data.session?.access_token;
     }
 
     const res = await fetch('/api/admin/records', {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: {
+        'x-instructor-master-key': INSTRUCTOR_MASTER_KEY_HEADER,
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
     });
     const body = await res.json();
-    if (!res.ok) {
-      return {
-        ok: false,
-        students: [],
-        purchases: [],
-        error: body.error || 'Failed to load admin records.',
-      };
+    if (res.ok && body.ok) {
+      for (const st of (body.students || []) as AdminStudentRecord[]) {
+        const clean = (st.email || '').trim().toLowerCase();
+        if (!clean) continue;
+        const existing = studentMap.get(clean);
+        studentMap.set(clean, {
+          id: st.id || existing?.id || `student-${clean}`,
+          email: clean,
+          fullName: st.fullName || existing?.fullName || clean.split('@')[0],
+          role: st.role || existing?.role || 'student',
+          createdAt: st.createdAt || existing?.createdAt || new Date().toISOString().split('T')[0],
+          completedLessonsCount: Math.max(
+            st.completedLessonsCount || 0,
+            existing?.completedLessonsCount || 0
+          ),
+          hasVerifiedPurchase: Boolean(
+            st.hasVerifiedPurchase || existing?.hasVerifiedPurchase
+          ),
+        });
+      }
+      purchases = body.purchases || [];
     }
-    return {
-      ok: true,
-      students: body.students || [],
-      purchases: body.purchases || [],
-    };
   } catch {
-    return {
-      ok: false,
-      students: [],
-      purchases: [],
-      error: 'Unable to reach /api/admin/records.',
-    };
+    // Use merged access users map
   }
+
+  return {
+    ok: true,
+    students: Array.from(studentMap.values()),
+    purchases,
+  };
 }
 
 // ============================================================================

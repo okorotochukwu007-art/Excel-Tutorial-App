@@ -34,6 +34,8 @@ import {
   CheckCircle2,
   Sparkles,
   Lock,
+  Unlock,
+  Phone,
 } from 'lucide-react';
 import {
   AdminStudentRecord,
@@ -64,24 +66,27 @@ import {
 } from '../utils/excelWorkbookGenerator';
 import {
   addManualAdminYoutubeRecommendation,
+  AppAccessUserRecord,
   batchDiscoverAdminYoutubeRecommendations,
   createOrUpdateLessonViaBackend,
   deleteAdminYoutubeRecommendation,
   deleteLessonViaBackend,
   discoverAdminYoutubeRecommendations,
+  fetchAdminAppAccessUsers,
   fetchAdminLessonRecommendations,
   fetchAdminRecords,
   fetchAdminVideoCoverageAudit,
+  grantOrRevokeEmailFullAccess,
   previewYoutubePlaylistViaBackend,
   saveCourseSettingsViaBackend,
   saveQuizQuestionViaBackend,
   seedCurriculumViaBackend,
   SupabaseBackendStatus,
   updateAdminYoutubeRecommendationStatus,
-  verifyPaystackPayment,
 } from '../services/academyService';
 
 type AdminSection =
+  | 'student_access_control'
   | 'overview'
   | 'courses'
   | 'levels_modules'
@@ -138,47 +143,129 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   onAddQuizQuestionToLesson,
   onSignOutAdmin,
 }) => {
-  const [activeSection, setActiveSection] = useState<AdminSection>('overview');
+  const [activeSection, setActiveSection] = useState<AdminSection>('student_access_control');
   const [copiedSql, setCopiedSql] = useState(false);
   const [seedFeedback, setSeedFeedback] = useState('');
   const [isSeeding, setIsSeeding] = useState(false);
+
+  // Student Access & Full Access Grant State
+  const [accessUsers, setAccessUsers] = useState<AppAccessUserRecord[]>([]);
+  const [accessUsersLoading, setAccessUsersLoading] = useState<boolean>(false);
+  const [grantEmailInput, setGrantEmailInput] = useState<string>('');
+  const [grantNameInput, setGrantNameInput] = useState<string>('');
+  const [isGrantingAccess, setIsGrantingAccess] = useState<boolean>(false);
+  const [grantingRowEmail, setGrantingRowEmail] = useState<string | null>(null);
+  const [accessControlFeedback, setAccessControlFeedback] = useState<string>('');
+  const [accessSearchQuery, setAccessSearchQuery] = useState<string>('');
+  const [accessStatusFilter, setAccessStatusFilter] = useState<'all' | 'full_access' | 'free_only'>('all');
 
   // Stage 4 Live Admin Records State
   const [liveStudents, setLiveStudents] = useState<AdminStudentRecord[]>([]);
   const [livePurchases, setLivePurchases] = useState<PurchaseRecord[]>([]);
   const [recordsLoading, setRecordsLoading] = useState(false);
   const [recordsNote, setRecordsNote] = useState('');
-  const [manualVerifyRef, setManualVerifyRef] = useState('');
-  const [manualVerifyFeedback, setManualVerifyFeedback] = useState('');
+
+  const handleLoadAccessUsers = async () => {
+    setAccessUsersLoading(true);
+    const res = await fetchAdminAppAccessUsers();
+    setAccessUsersLoading(false);
+    if (res.ok) {
+      setAccessUsers(res.users);
+    }
+  };
 
   const handleLoadAdminRecords = async () => {
     setRecordsLoading(true);
     setRecordsNote('');
-    const res = await fetchAdminRecords();
+    const [res, accessRes] = await Promise.all([
+      fetchAdminRecords(),
+      fetchAdminAppAccessUsers(),
+    ]);
     setRecordsLoading(false);
+    if (accessRes.ok) {
+      setAccessUsers(accessRes.users);
+    }
     if (res.ok) {
       setLiveStudents(res.students);
       setLivePurchases(res.purchases);
       setRecordsNote(
-        `Loaded ${res.students.length} student profile(s) and ${res.purchases.length} purchase transaction(s) from Supabase PostgreSQL.`
+        `Loaded ${res.students.length} student profile(s) and ${res.purchases.length} access/purchase record(s).`
       );
     } else {
-      setRecordsNote(res.error || 'Could not load records from Supabase.');
+      setRecordsNote(res.error || 'Could not load records.');
     }
   };
 
-  const handleAdminManualVerifyReference = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!manualVerifyRef.trim()) return;
-    setManualVerifyFeedback('Verifying with Paystack API...');
-    const res = await verifyPaystackPayment(manualVerifyRef.trim());
-    if (res.ok && res.verified) {
-      setManualVerifyFeedback(
-        res.message || `Verified reference ${res.reference}!`
-      );
+  useEffect(() => {
+    handleLoadAccessUsers();
+    handleLoadAdminRecords();
+  }, []);
+
+  useEffect(() => {
+    if (
+      activeSection === 'student_access_control' ||
+      activeSection === 'students' ||
+      activeSection === 'orders_payments'
+    ) {
+      handleLoadAccessUsers();
       handleLoadAdminRecords();
+    }
+  }, [activeSection]);
+
+  const handleGrantAccessByForm = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanEmail = grantEmailInput.trim().toLowerCase();
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      setAccessControlFeedback('Please enter a valid student email address.');
+      return;
+    }
+    setIsGrantingAccess(true);
+    setAccessControlFeedback('');
+    const res = await grantOrRevokeEmailFullAccess({
+      email: cleanEmail,
+      fullName: grantNameInput.trim() || undefined,
+      grant: true,
+    });
+    setIsGrantingAccess(false);
+    if (res.ok) {
+      setGrantEmailInput('');
+      setGrantNameInput('');
+      setAccessControlFeedback(
+        res.message || `Full Academy Access (Levels 1–6) granted to ${cleanEmail}!`
+      );
+      await handleLoadAccessUsers();
+      await handleLoadAdminRecords();
     } else {
-      setManualVerifyFeedback(res.error || 'Verification failed.');
+      setAccessControlFeedback(res.error || 'Could not grant full access.');
+    }
+  };
+
+  const handleToggleRowFullAccess = async (
+    email: string,
+    fullName: string,
+    grant: boolean
+  ) => {
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail) return;
+    setGrantingRowEmail(cleanEmail);
+    setAccessControlFeedback('');
+    const res = await grantOrRevokeEmailFullAccess({
+      email: cleanEmail,
+      fullName,
+      grant,
+    });
+    setGrantingRowEmail(null);
+    if (res.ok) {
+      setAccessControlFeedback(
+        res.message ||
+          (grant
+            ? `Full Academy Access granted to ${cleanEmail}!`
+            : `Full Access revoked for ${cleanEmail}.`)
+      );
+      await handleLoadAccessUsers();
+      await handleLoadAdminRecords();
+    } else {
+      setAccessControlFeedback(res.error || 'Could not update access.');
     }
   };
 
@@ -1034,6 +1121,11 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   };
 
   const navItems: { id: AdminSection; label: string; icon: React.ReactNode }[] = [
+    {
+      id: 'student_access_control',
+      label: '0. Student Access & Full Access',
+      icon: <Unlock className="w-4 h-4 text-emerald-500" />,
+    },
     { id: 'overview', label: '1. Overview & Supabase SQL', icon: <BarChart2 className="w-4 h-4" /> },
     { id: 'courses', label: '2. Courses & Syllabus', icon: <BookOpen className="w-4 h-4" /> },
     {
@@ -1084,6 +1176,69 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     },
   ];
 
+  // Build unified student access list combining accessUsers + liveStudents so zero signed-up students are missed
+  const unifiedAccessUsers: AppAccessUserRecord[] = React.useMemo(() => {
+    const map = new Map<string, AppAccessUserRecord>();
+    for (const u of accessUsers) {
+      const clean = (u.email || '').trim().toLowerCase();
+      if (!clean) continue;
+      map.set(clean, u);
+    }
+    for (const st of liveStudents) {
+      const clean = (st.email || '').trim().toLowerCase();
+      if (!clean) continue;
+      const existing = map.get(clean);
+      map.set(clean, {
+        email: clean,
+        fullName: st.fullName || existing?.fullName || clean.split('@')[0],
+        role:
+          clean === 'okorotochukwu007@gmail.com' || st.role === 'admin'
+            ? 'admin'
+            : 'student',
+        hasFullAccess: Boolean(
+          existing?.hasFullAccess ||
+            st.hasVerifiedPurchase ||
+            clean === 'okorotochukwu007@gmail.com'
+        ),
+        grantedAt: existing?.grantedAt || null,
+        grantedBy: existing?.grantedBy || null,
+        paymentMethod:
+          existing?.paymentMethod ||
+          (st.hasVerifiedPurchase ? 'Bank Transfer (Palmpay - 7080145682)' : null),
+        createdAt:
+          (st.createdAt ? String(st.createdAt).split('T')[0] : '') ||
+          existing?.createdAt ||
+          new Date().toISOString().split('T')[0],
+        lastSeenAt: existing?.lastSeenAt || new Date().toISOString(),
+        completedLessonsCount: Math.max(
+          existing?.completedLessonsCount || 0,
+          st.completedLessonsCount || 0
+        ),
+      });
+    }
+    return Array.from(map.values()).sort((a, b) => {
+      if (a.role === 'admin' && b.role !== 'admin') return -1;
+      if (a.role !== 'admin' && b.role === 'admin') return 1;
+      if (a.hasFullAccess !== b.hasFullAccess) return a.hasFullAccess ? -1 : 1;
+      return (b.lastSeenAt || '').localeCompare(a.lastSeenAt || '');
+    });
+  }, [accessUsers, liveStudents]);
+
+  const filteredAccessUsers = React.useMemo(() => {
+    return unifiedAccessUsers.filter((u) => {
+      if (accessStatusFilter === 'full_access' && !u.hasFullAccess) return false;
+      if (accessStatusFilter === 'free_only' && u.hasFullAccess) return false;
+      if (accessSearchQuery.trim()) {
+        const q = accessSearchQuery.trim().toLowerCase();
+        return (
+          u.email.toLowerCase().includes(q) ||
+          (u.fullName || '').toLowerCase().includes(q)
+        );
+      }
+      return true;
+    });
+  }, [unifiedAccessUsers, accessStatusFilter, accessSearchQuery]);
+
   return (
     <div className="max-w-7xl mx-auto px-6 py-8">
       {/* Security Boundary Header */}
@@ -1125,7 +1280,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         {/* Left Sidebar Navigation (3 cols on desktop, horizontal scroll on mobile) */}
         <aside className="lg:col-span-3 bg-white border border-slate-200 rounded-xl p-3 flex lg:flex-col overflow-x-auto lg:overflow-visible gap-1.5 whitespace-nowrap lg:whitespace-normal shrink-0">
           <div className="hidden lg:block px-3 py-2 text-xs font-mono font-semibold text-slate-400">
-            ADMINISTRATION SECTIONS (1–12)
+            ADMINISTRATION SECTIONS (0–12)
           </div>
           {navItems.map((item) => (
             <button
@@ -1146,6 +1301,303 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
 
         {/* Main Content Panel (9 cols) */}
         <main className="lg:col-span-9 space-y-6">
+          {/* SECTION 0: STUDENT ACCESS & GRANT FULL ACCESS PAGE */}
+          {activeSection === 'student_access_control' && (
+            <div className="space-y-6 text-xs">
+              <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-6">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div className="space-y-1">
+                    <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 font-mono text-[11px] font-bold">
+                      <Unlock className="w-3.5 h-3.5" />
+                      <span>INSTRUCTOR ACCESS CONTROL & BANK TRANSFER ACTIVATION</span>
+                    </div>
+                    <h1 className="text-xl font-bold text-slate-900">
+                      Student Access Directory &amp; Grant Full Access
+                    </h1>
+                    <p className="text-slate-600 leading-relaxed">
+                      View everyone who has signed up or accessed the Academy and grant lifetime Full Access (Levels 1–6) to any student email once their Palmpay bank transfer is confirmed.
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleLoadAccessUsers();
+                        handleLoadAdminRecords();
+                      }}
+                      disabled={accessUsersLoading || recordsLoading}
+                      className="px-4 py-2.5 bg-slate-900 text-white font-semibold rounded-lg hover:bg-emerald-800 transition-colors flex items-center gap-2 cursor-pointer"
+                    >
+                      <RefreshCw
+                        className={`w-3.5 h-3.5 ${
+                          accessUsersLoading || recordsLoading ? 'animate-spin' : ''
+                        }`}
+                      />
+                      <span>
+                        {accessUsersLoading || recordsLoading
+                          ? 'Syncing Students...'
+                          : 'Refresh All Students'}
+                      </span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Official Bank Transfer Account Details Reference */}
+                <div className="p-4 bg-emerald-950 text-white border border-emerald-800 rounded-xl grid grid-cols-1 md:grid-cols-4 gap-4 items-center">
+                  <div className="space-y-0.5">
+                    <div className="text-[10px] font-mono uppercase tracking-wider text-emerald-300">
+                      Account Name
+                    </div>
+                    <div className="font-bold text-sm text-white">Tochukwu Okoro</div>
+                  </div>
+                  <div className="space-y-0.5">
+                    <div className="text-[10px] font-mono uppercase tracking-wider text-emerald-300">
+                      Bank Name
+                    </div>
+                    <div className="font-bold text-sm text-amber-300">Palmpay</div>
+                  </div>
+                  <div className="space-y-0.5">
+                    <div className="text-[10px] font-mono uppercase tracking-wider text-emerald-300">
+                      Account Number
+                    </div>
+                    <div className="font-mono font-black text-base text-white tracking-wider">
+                      7080145682
+                    </div>
+                  </div>
+                  <div className="space-y-0.5">
+                    <div className="text-[10px] font-mono uppercase tracking-wider text-emerald-300">
+                      WhatsApp &amp; Call Confirmation
+                    </div>
+                    <div className="font-mono font-bold text-sm text-emerald-200 flex items-center gap-1.5">
+                      <Phone className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>07080145682</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Give Full Access to Any Email Form */}
+                <form
+                  onSubmit={handleGrantAccessByForm}
+                  className="p-5 bg-[#FAF9F5] border-2 border-emerald-700/30 rounded-xl space-y-4"
+                >
+                  <div className="space-y-1">
+                    <div className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                      <UserCheck className="w-4 h-4 text-emerald-800" />
+                      <span>Give Full Access (Levels 1–6) to Any Email Address</span>
+                    </div>
+                    <p className="text-slate-600">
+                      Enter a student&apos;s email address below and click <strong>Give Full Access</strong> to immediately unlock all 6 Levels, 54 modules, 108 video lessons, and certification exams for their account.
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+                    <div className="sm:col-span-5">
+                      <label htmlFor="grant-email-input" className="block font-semibold text-slate-800 mb-1">
+                        Student Email Address *
+                      </label>
+                      <input
+                        id="grant-email-input"
+                        type="email"
+                        required
+                        value={grantEmailInput}
+                        onChange={(e) => setGrantEmailInput(e.target.value)}
+                        placeholder="e.g. student@gmail.com"
+                        className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-lg text-slate-900 font-mono text-xs focus:outline-none focus:border-emerald-700"
+                      />
+                    </div>
+                    <div className="sm:col-span-4">
+                      <label htmlFor="grant-name-input" className="block font-semibold text-slate-800 mb-1">
+                        Student Full Name (Optional)
+                      </label>
+                      <input
+                        id="grant-name-input"
+                        type="text"
+                        value={grantNameInput}
+                        onChange={(e) => setGrantNameInput(e.target.value)}
+                        placeholder="e.g. Chinedu Okafor"
+                        className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-lg text-slate-900 text-xs focus:outline-none focus:border-emerald-700"
+                      />
+                    </div>
+                    <div className="sm:col-span-3 flex items-end">
+                      <button
+                        type="submit"
+                        disabled={isGrantingAccess}
+                        className="w-full py-2.5 px-4 bg-emerald-800 hover:bg-emerald-900 disabled:bg-slate-400 text-white font-bold rounded-lg transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-sm"
+                      >
+                        <Unlock className="w-4 h-4 shrink-0" />
+                        <span>
+                          {isGrantingAccess ? 'Granting...' : 'Give Full Access'}
+                        </span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {accessControlFeedback && (
+                    <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-emerald-950 font-semibold flex items-center gap-2">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
+                      <span>{accessControlFeedback}</span>
+                    </div>
+                  )}
+                </form>
+
+                {/* Summary Metrics */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div className="p-4 bg-[#FAF9F5] border border-slate-200 rounded-lg">
+                    <div className="text-slate-500">Everyone With App Access</div>
+                    <div className="text-2xl font-bold text-slate-900 font-mono tabular-nums mt-1">
+                      {unifiedAccessUsers.length}
+                    </div>
+                  </div>
+                  <div className="p-4 bg-emerald-50/70 border border-emerald-200 rounded-lg">
+                    <div className="text-emerald-800 font-semibold">
+                      Full Access Unlocked (Levels 1–6)
+                    </div>
+                    <div className="text-2xl font-bold text-emerald-900 font-mono tabular-nums mt-1">
+                      {unifiedAccessUsers.filter((u) => u.hasFullAccess).length}
+                    </div>
+                  </div>
+                  <div className="p-4 bg-[#FAF9F5] border border-slate-200 rounded-lg">
+                    <div className="text-slate-500">Free Level 1 Learners</div>
+                    <div className="text-2xl font-bold text-slate-900 font-mono tabular-nums mt-1">
+                      {unifiedAccessUsers.filter((u) => !u.hasFullAccess).length}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Search & Filter Bar */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="relative flex-1">
+                    <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      value={accessSearchQuery}
+                      onChange={(e) => setAccessSearchQuery(e.target.value)}
+                      placeholder="Search by student name or email address..."
+                      className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-900"
+                    />
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    {(
+                      [
+                        { id: 'all', label: `All (${unifiedAccessUsers.length})` },
+                        {
+                          id: 'full_access',
+                          label: `Full Access (${
+                            unifiedAccessUsers.filter((u) => u.hasFullAccess).length
+                          })`,
+                        },
+                        {
+                          id: 'free_only',
+                          label: `Free Tier (${
+                            unifiedAccessUsers.filter((u) => !u.hasFullAccess).length
+                          })`,
+                        },
+                      ] as const
+                    ).map((f) => (
+                      <button
+                        key={f.id}
+                        type="button"
+                        onClick={() => setAccessStatusFilter(f.id)}
+                        className={`px-3 py-2 rounded-lg font-semibold transition-colors cursor-pointer ${
+                          accessStatusFilter === f.id
+                            ? 'bg-slate-900 text-white'
+                            : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                        }`}
+                      >
+                        {f.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Complete Student Access Table */}
+                <div className="overflow-x-auto border border-slate-200 rounded-xl">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-slate-900 text-white font-mono text-[11px]">
+                        <th className="py-3 px-3.5">Student Name</th>
+                        <th className="py-3 px-3.5">Email Address</th>
+                        <th className="py-3 px-3.5">Progress</th>
+                        <th className="py-3 px-3.5">Current Access</th>
+                        <th className="py-3 px-3.5 text-right">Instructor Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200">
+                      {filteredAccessUsers.map((u) => {
+                        const isRowBusy = grantingRowEmail === u.email.toLowerCase();
+                        const isLeadAdmin =
+                          u.email.toLowerCase() === 'okorotochukwu007@gmail.com' ||
+                          u.role === 'admin';
+                        return (
+                          <tr key={u.email} className="hover:bg-slate-50">
+                            <td className="py-3 px-3.5">
+                              <div className="font-bold text-slate-900">{u.fullName}</div>
+                              <div className="text-[11px] text-slate-500 font-mono">
+                                Joined: {u.createdAt || '2026'}
+                              </div>
+                            </td>
+                            <td className="py-3 px-3.5 font-mono text-slate-800">
+                              {u.email}
+                            </td>
+                            <td className="py-3 px-3.5 font-mono tabular-nums text-slate-700">
+                              {u.completedLessonsCount || 0} / {allLessons.length} lessons
+                            </td>
+                            <td className="py-3 px-3.5">
+                              {u.hasFullAccess ? (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-emerald-100 text-emerald-900 font-bold text-[11px]">
+                                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700" />
+                                  <span>Full Access (Levels 1–6)</span>
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-amber-50 text-amber-900 border border-amber-200 font-semibold text-[11px]">
+                                  <Lock className="w-3 h-3 text-amber-700" />
+                                  <span>Free Tier (Level 1 Only)</span>
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-3 px-3.5 text-right">
+                              {isLeadAdmin ? (
+                                <span className="text-[11px] font-mono text-emerald-800 font-semibold">
+                                  Lead Instructor
+                                </span>
+                              ) : u.hasFullAccess ? (
+                                <button
+                                  type="button"
+                                  disabled={isRowBusy}
+                                  onClick={() =>
+                                    handleToggleRowFullAccess(u.email, u.fullName, false)
+                                  }
+                                  className="px-3 py-1.5 bg-slate-100 hover:bg-rose-50 text-slate-700 hover:text-rose-800 border border-slate-300 font-semibold rounded-lg transition-colors cursor-pointer"
+                                >
+                                  {isRowBusy ? 'Updating...' : 'Revoke Full Access'}
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  disabled={isRowBusy}
+                                  onClick={() =>
+                                    handleToggleRowFullAccess(u.email, u.fullName, true)
+                                  }
+                                  className="px-3.5 py-1.5 bg-emerald-800 hover:bg-emerald-900 text-white font-bold rounded-lg transition-colors inline-flex items-center gap-1.5 cursor-pointer shadow-xs"
+                                >
+                                  <Unlock className="w-3.5 h-3.5" />
+                                  <span>
+                                    {isRowBusy ? 'Granting...' : 'Give Full Access'}
+                                  </span>
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* SECTION 1: OVERVIEW & SUPABASE SQL MIGRATION */}
           {activeSection === 'overview' && (
             <div className="space-y-6">
@@ -2877,16 +3329,29 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
                   <h2 className="text-xl font-bold text-slate-900">
-                    7. Enrolled Students & RLS Directory
+                    7. Enrolled Students &amp; Access Directory ({unifiedAccessUsers.length})
                   </h2>
                   <p className="text-slate-600">
-                    View real registered student profiles, course entitlement status, and completed lesson counts from Supabase.
+                    Complete list of all registered students across Supabase Auth, database profiles, and the Academy access registry.
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <button
                     type="button"
-                    onClick={() => downloadAdminRosterXlsx(liveStudents, course.title)}
+                    onClick={() =>
+                      downloadAdminRosterXlsx(
+                        unifiedAccessUsers.map((u, idx) => ({
+                          id: `student-${idx}-${u.email}`,
+                          email: u.email,
+                          fullName: u.fullName,
+                          role: u.role,
+                          createdAt: u.createdAt,
+                          completedLessonsCount: u.completedLessonsCount,
+                          hasVerifiedPurchase: u.hasFullAccess,
+                        })),
+                        course.title
+                      )
+                    }
                     className="px-4 py-2 bg-emerald-800 text-white font-semibold rounded-lg hover:bg-emerald-900 flex items-center gap-1.5 cursor-pointer shadow-sm"
                   >
                     <FileSpreadsheet className="w-4 h-4" />
@@ -2894,19 +3359,26 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                   </button>
                   <button
                     type="button"
-                    onClick={handleLoadAdminRecords}
-                    disabled={recordsLoading}
+                    onClick={() => {
+                      handleLoadAccessUsers();
+                      handleLoadAdminRecords();
+                    }}
+                    disabled={recordsLoading || accessUsersLoading}
                     className="px-4 py-2 bg-slate-900 text-white font-semibold rounded-lg hover:bg-emerald-800 cursor-pointer"
                   >
-                    {recordsLoading ? 'Loading from Supabase...' : 'Refresh Student Directory'}
+                    {recordsLoading || accessUsersLoading
+                      ? 'Syncing Students...'
+                      : 'Refresh Student Directory'}
                   </button>
                 </div>
               </div>
 
-              <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-lg text-emerald-950 leading-relaxed">
-                <span className="font-semibold">Row Level Security (RLS) Policy Active: </span>
-                In <code className="font-mono">public.profiles</code>, students can only query and update their own row (<code className="font-mono">auth.uid() = id</code>). Verified administrators (<code className="font-mono">public.is_admin()</code>) can view all enrolled student profiles.
-              </div>
+              {accessControlFeedback && (
+                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-emerald-950 font-semibold flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
+                  <span>{accessControlFeedback}</span>
+                </div>
+              )}
 
               {recordsNote && (
                 <div className="p-3 bg-slate-100 border border-slate-200 rounded-lg text-slate-800 font-medium">
@@ -2914,7 +3386,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 </div>
               )}
 
-              {liveStudents.length > 0 ? (
+              {unifiedAccessUsers.length > 0 ? (
                 <div className="overflow-x-auto border border-slate-200 rounded-lg">
                   <table className="w-full text-left border-collapse">
                     <thead>
@@ -2924,198 +3396,251 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                         <th className="py-2.5 px-3">Role</th>
                         <th className="py-2.5 px-3">Course Access</th>
                         <th className="py-2.5 px-3">Completed Lessons</th>
+                        <th className="py-2.5 px-3 text-right">Action</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200">
-                      {liveStudents.map((st) => (
-                        <tr key={st.id} className="hover:bg-slate-50">
-                          <td className="py-2.5 px-3 font-semibold text-slate-900">
-                            {st.fullName}
-                          </td>
-                          <td className="py-2.5 px-3 font-mono text-slate-700">
-                            {st.email}
-                          </td>
-                          <td className="py-2.5 px-3 font-mono uppercase text-slate-700">
-                            {st.role}
-                          </td>
-                          <td className="py-2.5 px-3">
-                            {st.hasVerifiedPurchase ? (
-                              <span className="text-emerald-800 font-semibold">
-                                Lifetime Entitled
-                              </span>
-                            ) : (
-                              <span className="text-slate-500">Free Preview Tier</span>
-                            )}
-                          </td>
-                          <td className="py-2.5 px-3 font-mono tabular-nums">
-                            {st.completedLessonsCount} / {allLessons.length}
-                          </td>
-                        </tr>
-                      ))}
+                      {unifiedAccessUsers.map((st) => {
+                        const isBusy = grantingRowEmail === st.email.toLowerCase();
+                        const isLeadAdmin =
+                          st.email.toLowerCase() === 'okorotochukwu007@gmail.com' ||
+                          st.role === 'admin';
+                        return (
+                          <tr key={st.email} className="hover:bg-slate-50">
+                            <td className="py-2.5 px-3 font-semibold text-slate-900">
+                              {st.fullName}
+                            </td>
+                            <td className="py-2.5 px-3 font-mono text-slate-700">
+                              {st.email}
+                            </td>
+                            <td className="py-2.5 px-3 font-mono uppercase text-slate-700">
+                              {st.role}
+                            </td>
+                            <td className="py-2.5 px-3">
+                              {st.hasFullAccess ? (
+                                <span className="text-emerald-800 font-semibold">
+                                  Full Access (Levels 1–6)
+                                </span>
+                              ) : (
+                                <span className="text-slate-500">Free Preview Tier</span>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-3 font-mono tabular-nums">
+                              {st.completedLessonsCount} / {allLessons.length}
+                            </td>
+                            <td className="py-2.5 px-3 text-right">
+                              {isLeadAdmin ? (
+                                <span className="text-[11px] font-mono text-emerald-800 font-semibold">
+                                  Lead Instructor
+                                </span>
+                              ) : st.hasFullAccess ? (
+                                <button
+                                  type="button"
+                                  disabled={isBusy}
+                                  onClick={() =>
+                                    handleToggleRowFullAccess(st.email, st.fullName, false)
+                                  }
+                                  className="px-3 py-1 bg-slate-100 hover:bg-rose-50 text-slate-700 hover:text-rose-800 border border-slate-300 font-semibold rounded-md cursor-pointer"
+                                >
+                                  {isBusy ? 'Updating...' : 'Revoke Access'}
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  disabled={isBusy}
+                                  onClick={() =>
+                                    handleToggleRowFullAccess(st.email, st.fullName, true)
+                                  }
+                                  className="px-3 py-1 bg-emerald-800 hover:bg-emerald-900 text-white font-semibold rounded-md cursor-pointer"
+                                >
+                                  {isBusy ? 'Granting...' : 'Give Full Access'}
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
               ) : (
                 <div className="p-4 bg-[#FAF9F5] border border-slate-200 rounded-lg text-slate-600">
-                  Click <strong>Refresh Student Directory</strong> while signed in as an administrator to load live student rows from <code className="font-mono">public.profiles</code>. No fabricated student records are displayed.
+                  Click <strong>Refresh Student Directory</strong> to load all enrolled students.
                 </div>
               )}
             </div>
           )}
 
-          {/* SECTION 8: ORDERS AND PAYMENTS */}
+          {/* SECTION 8: ORDERS AND PAYMENTS (BANK TRANSFER & FULL ACCESS ACTIVATION) */}
           {activeSection === 'orders_payments' && (
             <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-5 text-xs">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
                   <h2 className="text-xl font-bold text-slate-900">
-                    8. Orders & Paystack Verification Console (Stage 4 Live)
+                    8. Bank Transfer Payments &amp; Full Access Activation
                   </h2>
                   <p className="text-slate-600 leading-relaxed">
-                    Server-side Paystack transaction initialization, reference verification, and HMAC SHA-512 webhook processing (<code className="font-mono">/api/paystack/webhook</code>).
+                    Manage student tuition transfers to <strong>Tochukwu Okoro · Palmpay · 7080145682</strong> and grant immediate Full Academy Access to any student email.
                   </p>
                 </div>
                 <button
                   type="button"
-                  onClick={handleLoadAdminRecords}
-                  disabled={recordsLoading}
+                  onClick={() => {
+                    handleLoadAccessUsers();
+                    handleLoadAdminRecords();
+                  }}
+                  disabled={recordsLoading || accessUsersLoading}
                   className="px-4 py-2 bg-slate-900 text-white font-semibold rounded-lg hover:bg-emerald-800 cursor-pointer"
                 >
-                  {recordsLoading ? 'Loading Orders...' : 'Load Live Purchases'}
+                  {recordsLoading || accessUsersLoading
+                    ? 'Refreshing...'
+                    : 'Refresh Payments & Access'}
                 </button>
               </div>
 
-              <div className="p-4 bg-[#FAF9F5] border border-slate-200 rounded-lg space-y-2">
-                <div className="font-bold text-slate-900">
-                  Paystack Server Status:{' '}
-                  <span
-                    className={
-                      supabaseStatus.paystackConfigured
-                        ? 'text-emerald-800'
-                        : 'text-amber-800'
-                    }
-                  >
-                    {supabaseStatus.paystackConfigured
-                      ? 'PAYSTACK_SECRET_KEY Configured on Server'
-                      : 'Awaiting PAYSTACK_SECRET_KEY in AI Studio Secrets'}
-                  </span>
+              <div className="p-4 bg-emerald-950 text-white border border-emerald-800 rounded-xl grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div>
+                  <div className="text-[10px] font-mono uppercase text-emerald-300">
+                    Official Tuition Bank Account
+                  </div>
+                  <div className="font-bold text-sm mt-0.5">
+                    Tochukwu Okoro · Palmpay
+                  </div>
                 </div>
-                <div className="text-slate-600 font-mono text-[11px]">
-                  Webhook Endpoint: {window.location.origin}/api/paystack/webhook
+                <div>
+                  <div className="text-[10px] font-mono uppercase text-emerald-300">
+                    Account Number
+                  </div>
+                  <div className="font-mono font-black text-base mt-0.5">
+                    7080145682
+                  </div>
+                </div>
+                <div>
+                  <div className="text-[10px] font-mono uppercase text-emerald-300">
+                    WhatsApp / Call Confirmation
+                  </div>
+                  <div className="font-mono font-bold text-sm text-emerald-200 mt-0.5">
+                    07080145682
+                  </div>
                 </div>
               </div>
 
-              {/* Manual Reference Verification Form */}
+              {/* Manual Email Full Access Grant Form */}
               <form
-                onSubmit={handleAdminManualVerifyReference}
+                onSubmit={handleGrantAccessByForm}
                 className="p-4 bg-slate-50 border border-slate-200 rounded-lg space-y-3"
               >
                 <div className="font-bold text-slate-900">
-                  Verify Paystack Transaction Reference (<code className="font-mono">POST /api/paystack/verify</code>)
+                  Confirm Bank Transfer &amp; Give Full Access to Student Email
                 </div>
                 <div className="flex flex-col sm:flex-row gap-2">
                   <input
-                    type="text"
-                    value={manualVerifyRef}
-                    onChange={(e) => setManualVerifyRef(e.target.value)}
-                    placeholder="Enter Paystack Reference (e.g. EXL-ACAD-...)"
+                    type="email"
+                    required
+                    value={grantEmailInput}
+                    onChange={(e) => setGrantEmailInput(e.target.value)}
+                    placeholder="Enter student email address (e.g. student@gmail.com)"
                     className="flex-1 px-3 py-2 bg-white border border-slate-300 rounded-lg text-slate-900 font-mono"
+                  />
+                  <input
+                    type="text"
+                    value={grantNameInput}
+                    onChange={(e) => setGrantNameInput(e.target.value)}
+                    placeholder="Student Name (optional)"
+                    className="sm:w-56 px-3 py-2 bg-white border border-slate-300 rounded-lg text-slate-900"
                   />
                   <button
                     type="submit"
-                    className="px-4 py-2 bg-emerald-800 text-white font-semibold rounded-lg hover:bg-emerald-900 cursor-pointer"
+                    disabled={isGrantingAccess}
+                    className="px-4 py-2 bg-emerald-800 text-white font-semibold rounded-lg hover:bg-emerald-900 cursor-pointer whitespace-nowrap"
                   >
-                    Verify & Grant Access
+                    {isGrantingAccess ? 'Granting...' : 'Give Full Access'}
                   </button>
                 </div>
-                {manualVerifyFeedback && (
-                  <div className="text-slate-800 font-medium">
-                    {manualVerifyFeedback}
+                {accessControlFeedback && (
+                  <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded text-emerald-950 font-semibold">
+                    {accessControlFeedback}
                   </div>
                 )}
               </form>
 
-              {livePurchases.length > 0 ? (
-                <div className="overflow-x-auto border border-slate-200 rounded-lg">
-                  <table className="w-full text-left border-collapse">
-                    <thead>
-                      <tr className="bg-slate-900 text-white font-mono text-[11px]">
-                        <th className="py-2.5 px-3">Reference</th>
-                        <th className="py-2.5 px-3">Student</th>
-                        <th className="py-2.5 px-3">Amount</th>
-                        <th className="py-2.5 px-3">Status</th>
-                        <th className="py-2.5 px-3">Paid At</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-200">
-                      {livePurchases.map((p) => (
-                        <tr key={p.id} className="hover:bg-slate-50 font-mono">
+              {/* All Enrolled Students & Payment/Access Status */}
+              <div className="overflow-x-auto border border-slate-200 rounded-lg">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-slate-900 text-white font-mono text-[11px]">
+                      <th className="py-2.5 px-3">Student</th>
+                      <th className="py-2.5 px-3">Email</th>
+                      <th className="py-2.5 px-3">Payment Method</th>
+                      <th className="py-2.5 px-3">Access Status</th>
+                      <th className="py-2.5 px-3 text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200">
+                    {unifiedAccessUsers.map((u) => {
+                      const isBusy = grantingRowEmail === u.email.toLowerCase();
+                      const isLeadAdmin =
+                        u.email.toLowerCase() === 'okorotochukwu007@gmail.com' ||
+                        u.role === 'admin';
+                      return (
+                        <tr key={u.email} className="hover:bg-slate-50">
                           <td className="py-2.5 px-3 font-semibold text-slate-900">
-                            {p.paystackReference}
+                            {u.fullName}
                           </td>
-                          <td className="py-2.5 px-3 text-slate-700">
-                            {p.userEmail || p.userId}
+                          <td className="py-2.5 px-3 font-mono text-slate-700">
+                            {u.email}
                           </td>
-                          <td className="py-2.5 px-3 tabular-nums">
-                            {p.currency} {p.amount.toLocaleString()}
+                          <td className="py-2.5 px-3 text-slate-600">
+                            {u.hasFullAccess
+                              ? u.paymentMethod || 'Bank Transfer (Palmpay - 7080145682)'
+                              : 'Awaiting Bank Transfer'}
                           </td>
-                          <td className="py-2.5 px-3 uppercase font-semibold">
-                            <span
-                              className={
-                                p.status === 'success'
-                                  ? 'text-emerald-800'
-                                  : p.status === 'failed'
-                                  ? 'text-rose-800'
-                                  : 'text-amber-800'
-                              }
-                            >
-                              {p.status}
-                            </span>
+                          <td className="py-2.5 px-3 font-semibold">
+                            {u.hasFullAccess ? (
+                              <span className="text-emerald-800">
+                                Full Access Active
+                              </span>
+                            ) : (
+                              <span className="text-amber-800">
+                                Free Level 1 Tier
+                              </span>
+                            )}
                           </td>
-                          <td className="py-2.5 px-3 text-slate-500">
-                            {p.paidAt
-                              ? new Date(p.paidAt).toLocaleString()
-                              : 'Pending'}
+                          <td className="py-2.5 px-3 text-right">
+                            {isLeadAdmin ? (
+                              <span className="font-mono text-[11px] text-emerald-800 font-semibold">
+                                Lead Instructor
+                              </span>
+                            ) : u.hasFullAccess ? (
+                              <button
+                                type="button"
+                                disabled={isBusy}
+                                onClick={() =>
+                                  handleToggleRowFullAccess(u.email, u.fullName, false)
+                                }
+                                className="px-3 py-1 bg-slate-100 hover:bg-rose-50 text-slate-700 hover:text-rose-800 border border-slate-300 font-semibold rounded-md cursor-pointer"
+                              >
+                                {isBusy ? 'Updating...' : 'Revoke Access'}
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                disabled={isBusy}
+                                onClick={() =>
+                                  handleToggleRowFullAccess(u.email, u.fullName, true)
+                                }
+                                className="px-3 py-1 bg-emerald-800 hover:bg-emerald-900 text-white font-semibold rounded-md cursor-pointer"
+                              >
+                                {isBusy ? 'Granting...' : 'Give Full Access'}
+                              </button>
+                            )}
                           </td>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {[
-                    {
-                      step: '1. Server-Side Transaction Initialization',
-                      detail:
-                        'POST /api/paystack/initialize looks up the authoritative course price from PostgreSQL and calls https://api.paystack.co/transaction/initialize using PAYSTACK_SECRET_KEY.',
-                    },
-                    {
-                      step: '2. Zero Trust on Frontend Callbacks',
-                      detail:
-                        'POST /api/paystack/verify independently verifies transaction status, reference, amount (in kobo/lowest denomination), and currency before unlocking access.',
-                    },
-                    {
-                      step: '3. Authenticated Webhook Processing',
-                      detail:
-                        'POST /api/paystack/webhook verifies x-paystack-signature using HMAC SHA-512 and processes charge.success idempotently.',
-                    },
-                    {
-                      step: '4. Lifetime Entitlement Recording',
-                      detail:
-                        'Verified purchases are recorded in public.purchases, unlocking protected lesson video IDs and workbooks.',
-                    },
-                  ].map((item) => (
-                    <div
-                      key={item.step}
-                      className="p-4 bg-[#FAF9F5] border border-slate-200 rounded-lg space-y-1.5"
-                    >
-                      <div className="font-bold text-slate-900">{item.step}</div>
-                      <p className="text-slate-600 leading-relaxed">{item.detail}</p>
-                    </div>
-                  ))}
-                </div>
-              )}
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
 
