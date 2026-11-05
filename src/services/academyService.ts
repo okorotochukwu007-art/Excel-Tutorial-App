@@ -935,12 +935,29 @@ function loadLocalAccessRegistry(): Record<string, AppAccessUserRecord> {
     completedLessonsCount: 108,
   };
 
+  const defaultVincentStudent: AppAccessUserRecord = {
+    email: 'unuanevincent123@gmail.com',
+    fullName: 'Vincent Unuane',
+    role: 'student',
+    hasFullAccess: true,
+    grantedAt: '2026-11-05T06:09:41.259Z',
+    grantedBy: 'Tochukwu Okoro (Lead Instructor)',
+    paymentMethod: 'Bank Transfer (Palmpay - 7080145682)',
+    createdAt: '2026-11-05',
+    lastSeenAt: new Date().toISOString(),
+    completedLessonsCount: 0,
+  };
+
   if (typeof window === 'undefined') {
-    return { 'okorotochukwu007@gmail.com': defaultAdmin };
+    return {
+      'okorotochukwu007@gmail.com': defaultAdmin,
+      'unuanevincent123@gmail.com': defaultVincentStudent,
+    };
   }
 
   let registry: Record<string, AppAccessUserRecord> = {
     'okorotochukwu007@gmail.com': defaultAdmin,
+    'unuanevincent123@gmail.com': defaultVincentStudent,
   };
 
   try {
@@ -948,7 +965,18 @@ function loadLocalAccessRegistry(): Record<string, AppAccessUserRecord> {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (parsed && typeof parsed === 'object') {
-        registry = { ...parsed, ...registry };
+        registry = {
+          ...parsed,
+          'okorotochukwu007@gmail.com': defaultAdmin,
+          'unuanevincent123@gmail.com': {
+            ...defaultVincentStudent,
+            ...(parsed['unuanevincent123@gmail.com'] || {}),
+            hasFullAccess:
+              parsed['unuanevincent123@gmail.com']?.hasFullAccess !== undefined
+                ? parsed['unuanevincent123@gmail.com'].hasFullAccess
+                : true,
+          },
+        };
       }
     }
   } catch {}

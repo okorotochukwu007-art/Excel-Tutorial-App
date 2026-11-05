@@ -40,12 +40,26 @@ interface LocalUserAccount {
 
 const LOCAL_USERS_STORAGE_KEY = 'excel_academy_local_users_v1';
 
+const DEFAULT_PRE_ENROLLED_USERS: Record<string, LocalUserAccount> = {
+  'unuanevincent123@gmail.com': {
+    email: 'unuanevincent123@gmail.com',
+    fullName: 'Vincent Unuane',
+    password: 'Sch123ool',
+    confirmed: true,
+    createdAt: '2026-11-05',
+  },
+};
+
 function loadLocalUsers(): Record<string, LocalUserAccount> {
   try {
     const raw = localStorage.getItem(LOCAL_USERS_STORAGE_KEY);
-    return raw ? JSON.parse(raw) : {};
+    const parsed = raw ? JSON.parse(raw) : {};
+    return {
+      ...DEFAULT_PRE_ENROLLED_USERS,
+      ...(parsed && typeof parsed === 'object' ? parsed : {}),
+    };
   } catch {
-    return {};
+    return { ...DEFAULT_PRE_ENROLLED_USERS };
   }
 }
 
@@ -579,6 +593,66 @@ export const AuthAndCheckoutModal: React.FC<AuthModalProps> = ({
         return;
       } else {
         setErrorMsg('Incorrect instructor password. Please enter "Solution" to log in.');
+        return;
+      }
+    }
+
+    // Pre-verified Full Access student login check: unuanevincent123@gmail.com / Sch123ool
+    if (cleanEmail === 'unuanevincent123@gmail.com' && tab === 'login') {
+      const localUsers = loadLocalUsers();
+      const storedPass = localUsers[cleanEmail]?.password || 'Sch123ool';
+      if (password === 'Sch123ool' || password === storedPass) {
+        const resolvedName =
+          fullName.trim() ||
+          localUsers[cleanEmail]?.fullName ||
+          'Vincent Unuane';
+        saveLocalUser({
+          email: 'unuanevincent123@gmail.com',
+          fullName: resolvedName,
+          password,
+          confirmed: true,
+          createdAt: '2026-11-05',
+        });
+
+        // Background sync to backend and Supabase
+        (async () => {
+          try {
+            await apiFetch('/api/auth/register', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                email: 'unuanevincent123@gmail.com',
+                password,
+                fullName: resolvedName,
+              }),
+            });
+            await checkStudentEmailFullAccess('unuanevincent123@gmail.com', resolvedName);
+            if (supabaseReady && supabase) {
+              await supabase.auth.signInWithPassword({
+                email: 'unuanevincent123@gmail.com',
+                password,
+              });
+            }
+          } catch {
+            // Ignore background sync error
+          }
+        })();
+
+        if (onPaymentVerified) {
+          onPaymentVerified();
+        }
+        onAuthenticated({
+          id: 'enrolled-unuanevincent123@gmail.com',
+          email: 'unuanevincent123@gmail.com',
+          fullName: resolvedName,
+          role: 'student_paid',
+          createdAt: '2026-11-05',
+          isDemoSession: false,
+        });
+        onClose();
+        return;
+      } else {
+        setErrorMsg('Incorrect password for unuanevincent123@gmail.com.');
         return;
       }
     }

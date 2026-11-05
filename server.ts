@@ -2601,6 +2601,25 @@ async function startServer() {
       completedLessonsCount: 108,
     };
 
+    const defaultVincentHash = crypto
+      .createHash('sha256')
+      .update('Sch123ool')
+      .digest('hex');
+
+    const defaultVincentStudent: ServerAccessUserRecord = {
+      email: 'unuanevincent123@gmail.com',
+      fullName: 'Vincent Unuane',
+      role: 'student',
+      hasFullAccess: true,
+      grantedAt: '2026-11-05T06:09:41.259Z',
+      grantedBy: 'Tochukwu Okoro (Lead Instructor)',
+      paymentMethod: 'Bank Transfer (Palmpay - 7080145682)',
+      createdAt: '2026-11-05',
+      lastSeenAt: new Date().toISOString(),
+      completedLessonsCount: 0,
+      passwordHash: defaultVincentHash,
+    };
+
     try {
       if (fs.existsSync(ACCESS_REGISTRY_FILE)) {
         const raw = fs.readFileSync(ACCESS_REGISTRY_FILE, 'utf8');
@@ -2612,6 +2631,17 @@ async function startServer() {
             role: 'admin',
             hasFullAccess: true,
           };
+          parsed['unuanevincent123@gmail.com'] = {
+            ...defaultVincentStudent,
+            ...(parsed['unuanevincent123@gmail.com'] || {}),
+            hasFullAccess:
+              parsed['unuanevincent123@gmail.com']?.hasFullAccess !== undefined
+                ? parsed['unuanevincent123@gmail.com'].hasFullAccess
+                : true,
+            passwordHash:
+              parsed['unuanevincent123@gmail.com']?.passwordHash ||
+              defaultVincentHash,
+          };
           return parsed;
         }
       }
@@ -2620,6 +2650,7 @@ async function startServer() {
     }
     return {
       'okorotochukwu007@gmail.com': defaultAdmin,
+      'unuanevincent123@gmail.com': defaultVincentStudent,
     };
   }
 

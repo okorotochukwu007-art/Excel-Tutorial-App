@@ -1,0 +1,50 @@
+{
+  "okorotochukwu007@gmail.com": {
+    "email": "okorotochukwu007@gmail.com",
+    "fullName": "Tochukwu Okoro (Lead Instructor)",
+    "role": "admin",
+    "hasFullAccess": true,
+    "grantedAt": "2026-10-23T08:00:00.000Z",
+    "grantedBy": "System (Lead Instructor)",
+    "paymentMethod": "Instructor Master Account",
+    "createdAt": "2026-10-23",
+    "lastSeenAt": "2026-11-05T07:39:40.305Z",
+    "completedLessonsCount": 108
+  },
+  "tokoro408@gmail.com": {
+    "email": "tokoro408@gmail.com",
+    "fullName": "Nelson Okoro",
+    "role": "student",
+    "hasFullAccess": true,
+    "grantedAt": "2026-10-28T14:38:04.395Z",
+    "grantedBy": "Tochukwu Okoro (Instructor)",
+    "paymentMethod": "Bank Transfer (Palmpay - 7080145682)",
+    "createdAt": "2026-11-05",
+    "lastSeenAt": "2026-11-05T06:20:15.129Z",
+    "completedLessonsCount": 4
+  },
+  "nelszt@gmail.com": {
+    "email": "nelszt@gmail.com",
+    "fullName": "Tochukwu Okoro",
+    "role": "student",
+    "hasFullAccess": false,
+    "grantedAt": null,
+    "grantedBy": null,
+    "paymentMethod": null,
+    "createdAt": "2026-11-05",
+    "lastSeenAt": "2026-11-05T06:20:15.130Z",
+    "completedLessonsCount": 1
+  },
+  "unuanevincent123@gmail.com": {
+    "email": "unuanevincent123@gmail.com",
+    "fullName": "Vincent Unuane",
+    "role": "student",
+    "hasFullAccess": true,
+    "grantedAt": "2026-11-05T06:09:41.259Z",
+    "grantedBy": "Tochukwu Okoro (Lead Instructor)",
+    "paymentMethod": "Bank Transfer (Palmpay - 7080145682)",
+    "createdAt": "2026-11-05",
+    "lastSeenAt": "2026-11-05T07:45:00.000Z",
+    "completedLessonsCount": 0
+  }
+}
