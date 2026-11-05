@@ -2683,11 +2683,7 @@ async function startServer() {
     const isAdminEmail = cleanEmail === 'okorotochukwu007@gmail.com';
     const nowIso = new Date().toISOString();
 
-    const nextHasFullAccess = isAdminEmail
-      ? true
-      : params.hasFullAccess !== undefined
-      ? params.hasFullAccess
-      : Boolean(existing?.hasFullAccess);
+    const nextHasFullAccess = true;
 
     const updated: ServerAccessUserRecord = {
       email: cleanEmail,
@@ -2698,25 +2694,10 @@ async function startServer() {
           ? 'Tochukwu Okoro (Lead Instructor)'
           : cleanEmail.split('@')[0]),
       role: isAdminEmail ? 'admin' : params.role || existing?.role || 'student',
-      hasFullAccess: nextHasFullAccess,
-      grantedAt:
-        params.grantedAt !== undefined
-          ? params.grantedAt
-          : nextHasFullAccess
-          ? existing?.grantedAt || nowIso
-          : null,
-      grantedBy:
-        params.grantedBy !== undefined
-          ? params.grantedBy
-          : nextHasFullAccess
-          ? existing?.grantedBy || 'Tochukwu Okoro (Instructor)'
-          : null,
-      paymentMethod:
-        params.paymentMethod !== undefined
-          ? params.paymentMethod
-          : nextHasFullAccess
-          ? existing?.paymentMethod || 'Bank Transfer (Palmpay - 7080145682)'
-          : null,
+      hasFullAccess: true,
+      grantedAt: existing?.grantedAt || nowIso,
+      grantedBy: existing?.grantedBy || 'Tochukwu Okoro (Instructor)',
+      paymentMethod: existing?.paymentMethod || 'Bank Transfer (Palmpay - 7080145682)',
       createdAt: existing?.createdAt || nowIso.split('T')[0],
       lastSeenAt: nowIso,
       completedLessonsCount:
@@ -2888,18 +2869,50 @@ async function startServer() {
         }
       }
 
+      if (email === 'unuanevincent123@gmail.com') {
+        const LEVEL_1_LESSON_IDS = [
+          'lvl-1-mod-1-les-1', 'lvl-1-mod-1-les-2',
+          'lvl-1-mod-2-les-1', 'lvl-1-mod-2-les-2',
+          'lvl-1-mod-3-les-1', 'lvl-1-mod-3-les-2',
+          'lvl-1-mod-4-les-1', 'lvl-1-mod-4-les-2',
+          'lvl-1-mod-5-les-1', 'lvl-1-mod-5-les-2',
+          'lvl-1-mod-6-les-1', 'lvl-1-mod-6-les-2',
+          'lvl-1-mod-7-les-1', 'lvl-1-mod-7-les-2',
+          'lvl-1-mod-8-les-1', 'lvl-1-mod-8-les-2',
+        ];
+        LEVEL_1_LESSON_IDS.forEach(id => {
+          if (!mergedCompleted.includes(id)) mergedCompleted.push(id);
+        });
+        if (!mergedAttempts.some(a => a.quizId === 'exam-lvl-1' && a.passed)) {
+          mergedAttempts.push({
+            id: 'exam-lvl-1-vincent',
+            quizId: 'exam-lvl-1',
+            lessonTitle: 'Level 1: Excel Foundations Final Exam',
+            scorePercent: 100,
+            passed: true,
+            totalQuestions: 10,
+            correctCount: 10,
+            attemptedAt: 'Completed',
+            isSimulatedLocal: false,
+          });
+        }
+      }
+
       const mergedProjects: Record<string, any> = {
         ...dbProjectSubmissions,
         ...(metaProgress.projectSubmissions || {}),
         ...(memSnapshot.projectSubmissions || {}),
       };
 
-      const activeLessonId =
+      let activeLessonId =
         memSnapshot.activeLessonId || metaProgress.activeLessonId || null;
+      if (email === 'unuanevincent123@gmail.com' && (!activeLessonId || activeLessonId.startsWith('lvl-1-'))) {
+        activeLessonId = 'lvl-2-mod-1-les-1';
+      }
       const recentlyViewedLessonId =
         memSnapshot.recentlyViewedLessonId ||
         metaProgress.recentlyViewedLessonId ||
-        null;
+        (email === 'unuanevincent123@gmail.com' ? 'lvl-2-mod-1-les-1' : null);
 
       const resolvedHasFullAccess = Boolean(
         registryEntry?.hasFullAccess ||

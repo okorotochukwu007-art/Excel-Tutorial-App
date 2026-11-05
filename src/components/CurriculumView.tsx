@@ -350,6 +350,7 @@ export const CurriculumView: React.FC<CurriculumViewProps> = ({
                               const lesIdx = allOrderedLessonIds.indexOf(lesson.id);
                               const isSeqLocked =
                                 !isInstructor &&
+                                !isPurchased &&
                                 lesIdx > 0 &&
                                 !completedLessonIds.includes(allOrderedLessonIds[lesIdx - 1]);
 

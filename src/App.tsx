@@ -336,7 +336,7 @@ export default function App() {
     requiredLessonTitle?: string;
     requiredLevelNumber?: number;
   } => {
-    if (isInstructor) {
+    if (isInstructor || isPurchased) {
       return { unlocked: true };
     }
 
