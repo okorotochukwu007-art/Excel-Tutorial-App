@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabaseClient';
+import { apiFetch } from '../lib/apiClient';
 import youtubeRecommendationsCache from '../data/youtubeRecommendationsCache.json';
 import { CURRICULUM_LEVELS } from '../data/curriculumData';
 import {
@@ -412,7 +413,7 @@ export async function saveFullStudentProgressSnapshot(
 ): Promise<StudentProgressSnapshot> {
   const mergedLocal = saveLocalStudentProgress(userId, email, snapshot);
   try {
-    const res = await fetch('/api/student/progress/save', {
+    const res = await apiFetch('/api/student/progress/save', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -421,7 +422,8 @@ export async function saveFullStudentProgressSnapshot(
         ...mergedLocal,
       }),
     });
-    if (res.ok) {
+    const contentType = (res.headers.get('content-type') || '').toLowerCase();
+    if (res.ok && contentType.includes('application/json')) {
       const data = await res.json();
       if (data?.ok && data?.progress) {
         return saveLocalStudentProgress(userId, email, data.progress);
@@ -441,12 +443,13 @@ export async function loadStudentProgressFromSupabase(
 
   // 1. Load from server endpoint (Supabase Auth user_metadata.academy_progress + tables)
   try {
-    const serverRes = await fetch('/api/student/progress/load', {
+    const serverRes = await apiFetch('/api/student/progress/load', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ userId, email }),
     });
-    if (serverRes.ok) {
+    const contentType = (serverRes.headers.get('content-type') || '').toLowerCase();
+    if (serverRes.ok && contentType.includes('application/json')) {
       const serverData = await serverRes.json();
       if (serverData?.ok) {
         combined = mergeStudentProgress(combined, {
@@ -1106,12 +1109,13 @@ export async function checkStudentEmailFullAccess(
   saveLocalAccessRegistry(localReg);
 
   try {
-    const res = await fetch('/api/access/check', {
+    const res = await apiFetch('/api/access/check', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email: cleanEmail, fullName }),
     });
-    if (res.ok) {
+    const contentType = (res.headers.get('content-type') || '').toLowerCase();
+    if (res.ok && contentType.includes('application/json')) {
       const data = await res.json();
       const serverGranted = Boolean(data?.hasFullAccess);
       const combinedGranted =
@@ -1213,7 +1217,7 @@ export async function fetchAdminAppAccessUsers(): Promise<{
   }));
 
   try {
-    const res = await fetch('/api/admin/access-users', {
+    const res = await apiFetch('/api/admin/access-users', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -1223,7 +1227,8 @@ export async function fetchAdminAppAccessUsers(): Promise<{
       body: JSON.stringify({ knownUsers }),
     });
 
-    if (res.ok) {
+    const contentType = (res.headers.get('content-type') || '').toLowerCase();
+    if (res.ok && contentType.includes('application/json')) {
       const data = await res.json();
       if (data?.ok && Array.isArray(data.users)) {
         const mergedMap: Record<string, AppAccessUserRecord> = { ...localReg };
@@ -1314,7 +1319,7 @@ export async function grantOrRevokeEmailFullAccess(payload: {
       token = data.session?.access_token;
     }
 
-    const res = await fetch('/api/admin/grant-access', {
+    const res = await apiFetch('/api/admin/grant-access', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -1328,25 +1333,28 @@ export async function grantOrRevokeEmailFullAccess(payload: {
       }),
     });
 
-    const data = await res.json();
-    if (res.ok && data?.ok) {
-      if (Array.isArray(data.users)) {
-        const syncedMap: Record<string, AppAccessUserRecord> = { ...localReg };
-        for (const u of data.users as AppAccessUserRecord[]) {
-          syncedMap[u.email.toLowerCase()] = u;
+    const contentType = (res.headers.get('content-type') || '').toLowerCase();
+    if (res.ok && contentType.includes('application/json')) {
+      const data = await res.json();
+      if (data?.ok) {
+        if (Array.isArray(data.users)) {
+          const syncedMap: Record<string, AppAccessUserRecord> = { ...localReg };
+          for (const u of data.users as AppAccessUserRecord[]) {
+            syncedMap[u.email.toLowerCase()] = u;
+          }
+          saveLocalAccessRegistry(syncedMap);
         }
-        saveLocalAccessRegistry(syncedMap);
+        return {
+          ok: true,
+          user: data.user || updatedLocal,
+          users: data.users || Object.values(localReg),
+          message:
+            data.message ||
+            (grant
+              ? `Full 6-Level Academy Access has been granted to ${cleanEmail}!`
+              : `Full Academy Access has been revoked for ${cleanEmail}.`),
+        };
       }
-      return {
-        ok: true,
-        user: data.user || updatedLocal,
-        users: data.users || Object.values(localReg),
-        message:
-          data.message ||
-          (grant
-            ? `Full 6-Level Academy Access has been granted to ${cleanEmail}!`
-            : `Full Academy Access has been revoked for ${cleanEmail}.`),
-      };
     }
   } catch {
     // Fallback to local registry update
@@ -1393,34 +1401,37 @@ export async function fetchAdminRecords(): Promise<{
       token = data.session?.access_token;
     }
 
-    const res = await fetch('/api/admin/records', {
+    const res = await apiFetch('/api/admin/records', {
       headers: {
         'x-instructor-master-key': INSTRUCTOR_MASTER_KEY_HEADER,
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
     });
-    const body = await res.json();
-    if (res.ok && body.ok) {
-      for (const st of (body.students || []) as AdminStudentRecord[]) {
-        const clean = (st.email || '').trim().toLowerCase();
-        if (!clean) continue;
-        const existing = studentMap.get(clean);
-        studentMap.set(clean, {
-          id: st.id || existing?.id || `student-${clean}`,
-          email: clean,
-          fullName: st.fullName || existing?.fullName || clean.split('@')[0],
-          role: st.role || existing?.role || 'student',
-          createdAt: st.createdAt || existing?.createdAt || new Date().toISOString().split('T')[0],
-          completedLessonsCount: Math.max(
-            st.completedLessonsCount || 0,
-            existing?.completedLessonsCount || 0
-          ),
-          hasVerifiedPurchase: Boolean(
-            st.hasVerifiedPurchase || existing?.hasVerifiedPurchase
-          ),
-        });
+    const contentType = (res.headers.get('content-type') || '').toLowerCase();
+    if (res.ok && contentType.includes('application/json')) {
+      const body = await res.json();
+      if (body.ok) {
+        for (const st of (body.students || []) as AdminStudentRecord[]) {
+          const clean = (st.email || '').trim().toLowerCase();
+          if (!clean) continue;
+          const existing = studentMap.get(clean);
+          studentMap.set(clean, {
+            id: st.id || existing?.id || `student-${clean}`,
+            email: clean,
+            fullName: st.fullName || existing?.fullName || clean.split('@')[0],
+            role: st.role || existing?.role || 'student',
+            createdAt: st.createdAt || existing?.createdAt || new Date().toISOString().split('T')[0],
+            completedLessonsCount: Math.max(
+              st.completedLessonsCount || 0,
+              existing?.completedLessonsCount || 0
+            ),
+            hasVerifiedPurchase: Boolean(
+              st.hasVerifiedPurchase || existing?.hasVerifiedPurchase
+            ),
+          });
+        }
+        purchases = body.purchases || [];
       }
-      purchases = body.purchases || [];
     }
   } catch {
     // Use merged access users map

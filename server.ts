@@ -293,6 +293,24 @@ function extractYoutubePlaylistId(input: string): string {
 
 async function startServer() {
   const app = express();
+
+  // Enable CORS so Netlify and external deployments can call /api/* endpoints seamlessly
+  app.use((req: Request, res: Response, next) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader(
+      'Access-Control-Allow-Methods',
+      'GET, POST, PUT, PATCH, DELETE, OPTIONS'
+    );
+    res.setHeader(
+      'Access-Control-Allow-Headers',
+      'Content-Type, Authorization, x-instructor-master-key'
+    );
+    if (req.method === 'OPTIONS') {
+      return res.status(204).end();
+    }
+    next();
+  });
+
   app.use(
     express.json({
       verify: (req: any, _res, buf) => {
@@ -2144,11 +2162,17 @@ async function startServer() {
       ];
       const assignedRole = adminEmails.includes(email) ? 'admin' : 'student';
 
+      const passwordHash = crypto
+        .createHash('sha256')
+        .update(password)
+        .digest('hex');
+
       // Immediately record in local server access registry so no student signup is ever missed
       upsertAccessRegistryUser({
         email,
         fullName: fullName || email.split('@')[0],
         role: assignedRole,
+        passwordHash,
       });
 
       const supabase = getServerSupabaseClient();
@@ -2349,49 +2373,198 @@ async function startServer() {
         });
       }
 
+      const passwordHash = crypto
+        .createHash('sha256')
+        .update(newPassword)
+        .digest('hex');
+
+      const registry = loadAccessRegistry();
+      const regUser = registry[email];
+
       const supabase = getServerSupabaseClient();
-      if (!supabase) {
-        return res.status(503).json({
-          ok: false,
-          error: 'Supabase is not configured on the server.',
-        });
+      let updatedInSupabase = false;
+      let foundInSupabase = false;
+
+      if (supabase) {
+        const allAuthUsers = await listAllSupabaseAuthUsers(supabase);
+        const existingUser = allAuthUsers.find(
+          (u: any) => u.email?.toLowerCase() === email
+        );
+
+        if (existingUser) {
+          foundInSupabase = true;
+          const { error: updateErr } = await supabase.auth.admin.updateUserById(
+            existingUser.id,
+            {
+              password: newPassword,
+              email_confirm: true,
+            }
+          );
+          if (!updateErr) {
+            updatedInSupabase = true;
+          }
+        }
       }
 
-      const { data: listData } = await supabase.auth.admin.listUsers();
-      const existingUser = (listData?.users || []).find(
-        (u: any) => u.email?.toLowerCase() === email
-      );
-
-      if (!existingUser) {
+      if (!regUser && !foundInSupabase) {
         return res.status(404).json({
           ok: false,
           error: 'No student account found with that email address. Please sign up first.',
         });
       }
 
-      const { error: updateErr } = await supabase.auth.admin.updateUserById(
-        existingUser.id,
-        {
-          password: newPassword,
-          email_confirm: true,
-        }
-      );
-
-      if (updateErr) {
-        return res.status(400).json({
-          ok: false,
-          error: updateErr.message || 'Could not update password.',
-        });
-      }
+      upsertAccessRegistryUser({
+        email,
+        fullName: regUser?.fullName || email.split('@')[0],
+        passwordHash,
+      });
 
       return res.json({
         ok: true,
+        updatedInSupabase,
         message: 'Your password has been reset. You can now log in with your new password.',
       });
     } catch (err: any) {
       return res.status(500).json({
         ok: false,
         error: err.message || 'Failed to reset password.',
+      });
+    }
+  });
+
+  // 17b. Server-Assisted Student & Instructor Login (Supports Netlify & Cross-Device Login)
+  app.post('/api/auth/login', async (req: Request, res: Response) => {
+    try {
+      const email = String(req.body?.email || '').trim().toLowerCase();
+      const password = String(req.body?.password || '');
+
+      if (!email || !email.includes('@') || !password) {
+        return res.status(400).json({
+          ok: false,
+          error: 'Please enter your email address and password.',
+        });
+      }
+
+      if (email === 'okorotochukwu007@gmail.com') {
+        if (password === 'Solution') {
+          return res.json({
+            ok: true,
+            user: {
+              id: 'instructor-okoro-tochukwu',
+              email: 'okorotochukwu007@gmail.com',
+              fullName: 'Tochukwu Okoro (Lead Instructor)',
+              role: 'admin',
+              hasFullAccess: true,
+              createdAt: '2026-10-23',
+            },
+          });
+        }
+        return res.status(401).json({
+          ok: false,
+          error: 'Incorrect instructor password. Please enter "Solution" to log in.',
+        });
+      }
+
+      const incomingHash = crypto
+        .createHash('sha256')
+        .update(password)
+        .digest('hex');
+
+      const registry = loadAccessRegistry();
+      const regEntry = registry[email];
+
+      // 1. Check if password matches the stored hash in .student_access_registry.json
+      if (regEntry?.passwordHash && regEntry.passwordHash === incomingHash) {
+        const updated = upsertAccessRegistryUser({ email });
+        return res.json({
+          ok: true,
+          user: {
+            id: `student-${email}`,
+            email,
+            fullName: updated?.fullName || email.split('@')[0],
+            role: updated?.hasFullAccess ? 'student_paid' : 'student_demo',
+            hasFullAccess: Boolean(updated?.hasFullAccess),
+            createdAt: updated?.createdAt || new Date().toISOString().split('T')[0],
+          },
+        });
+      }
+
+      // 2. Verify against Supabase Auth if configured
+      const supabase = getServerSupabaseClient();
+      if (supabase) {
+        const { data: signInData, error: signInErr } =
+          await supabase.auth.signInWithPassword({
+            email,
+            password,
+          });
+
+        // Note: Supabase GoTrue only returns "Email not confirmed" AFTER verifying that
+        // the email exists and the password matches!
+        const isConfirmedValidPassword =
+          Boolean(signInData?.user) ||
+          Boolean(
+            signInErr &&
+              signInErr.message.toLowerCase().includes('email not confirmed')
+          );
+
+        if (isConfirmedValidPassword) {
+          const resolvedName =
+            signInData?.user?.user_metadata?.full_name ||
+            regEntry?.fullName ||
+            email.split('@')[0];
+          const updated = upsertAccessRegistryUser({
+            email,
+            fullName: resolvedName,
+            passwordHash: incomingHash,
+          });
+          return res.json({
+            ok: true,
+            user: {
+              id: signInData?.user?.id || `student-${email}`,
+              email,
+              fullName: updated?.fullName || resolvedName,
+              role: updated?.hasFullAccess ? 'student_paid' : 'student_demo',
+              hasFullAccess: Boolean(updated?.hasFullAccess),
+              createdAt:
+                (signInData?.user?.created_at
+                  ? String(signInData.user.created_at).split('T')[0]
+                  : '') ||
+                updated?.createdAt ||
+                new Date().toISOString().split('T')[0],
+            },
+          });
+        }
+      }
+
+      // 3. If user exists in registry without a passwordHash yet (e.g. registered earlier before passwordHash was tracked),
+      // bind their passwordHash now and sign them in
+      if (regEntry && !regEntry.passwordHash && password.length >= 8) {
+        const updated = upsertAccessRegistryUser({
+          email,
+          passwordHash: incomingHash,
+        });
+        return res.json({
+          ok: true,
+          user: {
+            id: `student-${email}`,
+            email,
+            fullName: updated?.fullName || email.split('@')[0],
+            role: updated?.hasFullAccess ? 'student_paid' : 'student_demo',
+            hasFullAccess: Boolean(updated?.hasFullAccess),
+            createdAt: updated?.createdAt || new Date().toISOString().split('T')[0],
+          },
+        });
+      }
+
+      return res.status(401).json({
+        ok: false,
+        error:
+          'Invalid email or password. Every student must Sign Up first to get their login details, or click "Forgot password?" below to reset your password.',
+      });
+    } catch (err: any) {
+      return res.status(500).json({
+        ok: false,
+        error: err.message || 'Unable to verify login credentials.',
       });
     }
   });
@@ -2411,6 +2584,7 @@ async function startServer() {
     createdAt: string;
     lastSeenAt: string;
     completedLessonsCount: number;
+    passwordHash?: string;
   }
 
   function loadAccessRegistry(): Record<string, ServerAccessUserRecord> {
@@ -2466,6 +2640,7 @@ async function startServer() {
     grantedBy?: string | null;
     paymentMethod?: string | null;
     completedLessonsCount?: number;
+    passwordHash?: string;
   }): ServerAccessUserRecord | null {
     const cleanEmail = (params.email || '').trim().toLowerCase();
     if (!cleanEmail || !cleanEmail.includes('@') || cleanEmail.endsWith('.local')) {
@@ -2517,6 +2692,7 @@ async function startServer() {
         typeof params.completedLessonsCount === 'number'
           ? Math.max(params.completedLessonsCount, existing?.completedLessonsCount || 0)
           : existing?.completedLessonsCount || 0,
+      passwordHash: params.passwordHash || existing?.passwordHash,
     };
 
     registry[cleanEmail] = updated;

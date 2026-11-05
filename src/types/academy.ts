@@ -1,4 +1,10 @@
-export type UserRole = 'visitor' | 'student_demo' | 'admin_demo' | 'admin';
+export type UserRole =
+  | 'visitor'
+  | 'student_demo'
+  | 'student_paid'
+  | 'student'
+  | 'admin_demo'
+  | 'admin';
 
 export interface Profile {
   id: string;

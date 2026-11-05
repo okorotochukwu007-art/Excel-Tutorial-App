@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { Course, Profile } from '../types/academy';
 import { isSupabaseClientConfigured, supabase } from '../lib/supabaseClient';
+import { apiFetch } from '../lib/apiClient';
 import {
   checkStudentEmailFullAccess,
   fetchOrCreateUserProfile,
@@ -136,7 +137,7 @@ export const AuthAndCheckoutModal: React.FC<AuthModalProps> = ({
     const interval = setInterval(async () => {
       if (cancelled || isSubmitting) return;
       try {
-        const res = await fetch('/api/auth/check-confirmation', {
+        const res = await apiFetch('/api/auth/check-confirmation', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ email: cleanEmail }),
@@ -326,66 +327,77 @@ export const AuthAndCheckoutModal: React.FC<AuthModalProps> = ({
 
     try {
       const localUsers = loadLocalUsers();
-      if (localUsers[cleanEmail]) {
-        localUsers[cleanEmail].confirmed = true;
-        saveLocalUser(localUsers[cleanEmail]);
-      }
+      const resolvedName =
+        fullName.trim() ||
+        localUsers[cleanEmail]?.fullName ||
+        cleanEmail.split('@')[0];
 
-      if (!supabaseReady || !supabase) {
-        onAuthenticated({
-          id: 'demo-student-local',
-          email: cleanEmail,
-          fullName: fullName.trim() || localUsers[cleanEmail]?.fullName || cleanEmail.split('@')[0],
-          role: 'student_demo',
-          createdAt: new Date().toISOString().split('T')[0],
-          isDemoSession: false,
-        });
-        onClose();
-        return;
-      }
+      saveLocalUser({
+        email: cleanEmail,
+        fullName: resolvedName,
+        password: password || localUsers[cleanEmail]?.password || '',
+        confirmed: true,
+        createdAt:
+          localUsers[cleanEmail]?.createdAt ||
+          new Date().toISOString().split('T')[0],
+      });
 
-      // Ensure the account exists and is confirmed in Supabase on the server
-      // (Bypasses any broken localhost:3000 redirect in Supabase email templates)
-      await fetch('/api/auth/register', {
+      // Register and confirm on backend (via apiFetch so Netlify reaches the backend too)
+      await apiFetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           email: cleanEmail,
           password,
-          fullName: fullName.trim() || cleanEmail.split('@')[0],
+          fullName: resolvedName,
         }),
-      });
+      }).catch(() => {});
 
-      await fetch('/api/auth/confirm-email', {
+      await apiFetch('/api/auth/confirm-email', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: cleanEmail }),
-      });
+        body: JSON.stringify({ email: cleanEmail, fullName: resolvedName }),
+      }).catch(() => {});
 
-      const { data: signInData, error: signInErr } =
-        await supabase.auth.signInWithPassword({
-          email: cleanEmail,
-          password,
-        });
-
-      if (signInErr) {
-        setInfoMsg('Your email is now confirmed! Please click "Log In" below to enter the Academy.');
-        setTab('login');
-        setIsSubmitting(false);
-        return;
+      const accessRes = await checkStudentEmailFullAccess(cleanEmail, resolvedName);
+      if (accessRes.ok && accessRes.hasFullAccess && onPaymentVerified) {
+        onPaymentVerified();
       }
 
-      if (signInData.user) {
-        const profile = await fetchOrCreateUserProfile(
-          signInData.user.id,
-          signInData.user.email || cleanEmail,
-          fullName.trim()
-        );
-        if (profile) {
-          onAuthenticated(profile);
-          onClose();
+      if (supabaseReady && supabase && password) {
+        const { data: signInData, error: signInErr } =
+          await supabase.auth.signInWithPassword({
+            email: cleanEmail,
+            password,
+          });
+
+        if (!signInErr && signInData?.user) {
+          const profile = await fetchOrCreateUserProfile(
+            signInData.user.id,
+            signInData.user.email || cleanEmail,
+            resolvedName
+          );
+          if (profile) {
+            onAuthenticated(profile);
+            onClose();
+            return;
+          }
         }
       }
+
+      // If on static Netlify or if Supabase confirmation email link hasn't been clicked yet,
+      // sign the student in immediately so they can start learning right away
+      onAuthenticated({
+        id: accessRes.hasFullAccess ? `enrolled-${cleanEmail}` : `student-${cleanEmail}`,
+        email: cleanEmail,
+        fullName: resolvedName,
+        role: accessRes.hasFullAccess ? 'student_paid' : 'student_demo',
+        createdAt:
+          localUsers[cleanEmail]?.createdAt ||
+          new Date().toISOString().split('T')[0],
+        isDemoSession: false,
+      });
+      onClose();
     } catch (err: any) {
       setErrorMsg(err.message || 'Could not complete email verification. Please try signing in.');
     } finally {
@@ -407,15 +419,16 @@ export const AuthAndCheckoutModal: React.FC<AuthModalProps> = ({
     setIsSubmitting(true);
     try {
       // Check if account exists on server so we can reset directly in-app without a broken localhost redirect
-      if (supabaseReady) {
-        const checkRes = await fetch('/api/auth/check-confirmation', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: cleanEmail }),
-        });
+      const checkRes = await apiFetch('/api/auth/check-confirmation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: cleanEmail }),
+      });
+      const contentType = (checkRes.headers.get('content-type') || '').toLowerCase();
+      if (checkRes.ok && contentType.includes('application/json')) {
         const checkData = await checkRes.json();
         const localUsers = loadLocalUsers();
-        if (checkRes.ok && !checkData.exists && !localUsers[cleanEmail]) {
+        if (!checkData.exists && !localUsers[cleanEmail]) {
           setErrorMsg(
             'No student account was found with that email address. Please check the spelling or sign up for a new account.'
           );
@@ -429,7 +442,7 @@ export const AuthAndCheckoutModal: React.FC<AuthModalProps> = ({
       );
       setResendCooldown(60);
       setTab('reset_password');
-    } catch (err: any) {
+    } catch {
       setInfoMsg(
         `Enter your new password for ${cleanEmail} below.`
       );
@@ -477,14 +490,15 @@ export const AuthAndCheckoutModal: React.FC<AuthModalProps> = ({
       }
 
       if (supabaseReady && supabase) {
-        // First try updating via active recovery session if present
         const { data: sessionData } = await supabase.auth.getSession();
         if (sessionData?.session?.user) {
           await supabase.auth.updateUser({ password: newPassword });
         }
+      }
 
-        // Also update via server-side endpoint so password reset always succeeds
-        const res = await fetch('/api/auth/reset-password', {
+      // Also update via server-side endpoint (works from Netlify via apiFetch fallback)
+      try {
+        await apiFetch('/api/auth/reset-password', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -492,12 +506,8 @@ export const AuthAndCheckoutModal: React.FC<AuthModalProps> = ({
             newPassword,
           }),
         });
-        const data = await res.json();
-        if (!res.ok && !sessionData?.session?.user) {
-          setErrorMsg(data.error || 'Could not reset password for this email address.');
-          setIsSubmitting(false);
-          return;
-        }
+      } catch {
+        // Local user record is already updated above for static/offline fallback
       }
 
       setPassword(newPassword);
@@ -526,7 +536,7 @@ export const AuthAndCheckoutModal: React.FC<AuthModalProps> = ({
           const sb = supabase;
           (async () => {
             try {
-              await fetch('/api/auth/register', {
+              await apiFetch('/api/auth/register', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -600,7 +610,7 @@ export const AuthAndCheckoutModal: React.FC<AuthModalProps> = ({
 
         // Immediately record student in local & server access registry so instructor sees them right away
         checkStudentEmailFullAccess(cleanEmail, fullName.trim()).catch(() => {});
-        fetch('/api/auth/register', {
+        apiFetch('/api/auth/register', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -646,81 +656,200 @@ export const AuthAndCheckoutModal: React.FC<AuthModalProps> = ({
       return;
     }
 
-    // Login Flow — every student must have signed up first
-    if (!supabaseReady || !supabase) {
-      const localUsers = loadLocalUsers();
-      const matched = localUsers[cleanEmail];
-      if (!matched) {
-        setErrorMsg(
-          'No student account found for this email. Every student must Sign Up first to create their login details.'
-        );
-        return;
-      }
-      if (matched.password !== password) {
-        setErrorMsg('Incorrect password. Click "Forgot password?" if you need to reset it.');
-        return;
-      }
-      const resolvedName = matched.fullName || fullName.trim() || cleanEmail.split('@')[0];
-      const accessRes = await checkStudentEmailFullAccess(cleanEmail, resolvedName);
-      if (accessRes.ok && accessRes.hasFullAccess && onPaymentVerified) {
-        onPaymentVerified();
-      }
-      onAuthenticated({
-        id: accessRes.hasFullAccess ? `enrolled-${cleanEmail}` : 'demo-student-local',
-        email: cleanEmail,
-        fullName: resolvedName,
-        role: accessRes.hasFullAccess ? 'student_paid' : 'student_demo',
-        createdAt: matched.createdAt || new Date().toISOString().split('T')[0],
-        isDemoSession: false,
-      });
-      onClose();
-      return;
-    }
-
+    // Login Flow (Works seamlessly across AI Studio, Netlify, and all browsers/devices)
     setIsSubmitting(true);
     try {
-      let { data, error } = await supabase.auth.signInWithPassword({
-        email: cleanEmail,
-        password,
-      });
+      const localUsers = loadLocalUsers();
+      const matchedLocal = localUsers[cleanEmail];
 
-      if (
-        error &&
-        error.message.toLowerCase().includes('email not confirmed')
-      ) {
-        await fetch('/api/auth/confirm-email', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: cleanEmail }),
-        });
-        const retry = await supabase.auth.signInWithPassword({
+      // 1. If Supabase client is configured, attempt Supabase signInWithPassword first
+      if (supabaseReady && supabase) {
+        let { data, error } = await supabase.auth.signInWithPassword({
           email: cleanEmail,
           password,
         });
-        data = retry.data;
-        error = retry.error;
+
+        if (
+          error &&
+          error.message.toLowerCase().includes('email not confirmed')
+        ) {
+          await apiFetch('/api/auth/confirm-email', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: cleanEmail }),
+          }).catch(() => {});
+          const retry = await supabase.auth.signInWithPassword({
+            email: cleanEmail,
+            password,
+          });
+          data = retry.data;
+          error = retry.error;
+        }
+
+        if (!error && data?.user) {
+          saveLocalUser({
+            email: cleanEmail,
+            fullName:
+              data.user.user_metadata?.full_name ||
+              matchedLocal?.fullName ||
+              fullName.trim() ||
+              cleanEmail.split('@')[0],
+            password,
+            confirmed: true,
+            createdAt:
+              matchedLocal?.createdAt || new Date().toISOString().split('T')[0],
+          });
+
+          const accessRes = await checkStudentEmailFullAccess(cleanEmail);
+          if (accessRes.ok && accessRes.hasFullAccess && onPaymentVerified) {
+            onPaymentVerified();
+          }
+
+          const profile = await fetchOrCreateUserProfile(
+            data.user.id,
+            data.user.email || cleanEmail
+          );
+          if (profile) {
+            onAuthenticated({
+              ...profile,
+              role: accessRes.hasFullAccess ? 'student_paid' : profile.role,
+            });
+            onClose();
+            return;
+          }
+        }
+
+        // Note: Supabase GoTrue ONLY returns "Email not confirmed" AFTER verifying that
+        // the account exists and the password matches! On Netlify (or without service_role_key),
+        // sign the verified student in immediately instead of blocking them.
+        if (error && error.message.toLowerCase().includes('email not confirmed')) {
+          const resolvedName =
+            matchedLocal?.fullName || fullName.trim() || cleanEmail.split('@')[0];
+          saveLocalUser({
+            email: cleanEmail,
+            fullName: resolvedName,
+            password,
+            confirmed: true,
+            createdAt:
+              matchedLocal?.createdAt || new Date().toISOString().split('T')[0],
+          });
+          const accessRes = await checkStudentEmailFullAccess(cleanEmail, resolvedName);
+          if (accessRes.ok && accessRes.hasFullAccess && onPaymentVerified) {
+            onPaymentVerified();
+          }
+          onAuthenticated({
+            id: accessRes.hasFullAccess ? `enrolled-${cleanEmail}` : `student-${cleanEmail}`,
+            email: cleanEmail,
+            fullName: resolvedName,
+            role: accessRes.hasFullAccess ? 'student_paid' : 'student_demo',
+            createdAt:
+              matchedLocal?.createdAt || new Date().toISOString().split('T')[0],
+            isDemoSession: false,
+          });
+          onClose();
+          return;
+        }
       }
 
-      if (error) {
-        setErrorMsg(
-          error.message.toLowerCase().includes('invalid login credentials')
-            ? 'Invalid email or password. Every student must Sign Up first to get their login details, or click "Forgot password?" below to reset your password.'
-            : error.message
-        );
-        setIsSubmitting(false);
+      // 2. Check server-assisted login endpoint (/api/auth/login via apiFetch)
+      // This handles Netlify builds where VITE_SUPABASE_URL wasn't set or passwords reset in-app
+      try {
+        const loginRes = await apiFetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: cleanEmail, password }),
+        });
+        const contentType = (loginRes.headers.get('content-type') || '').toLowerCase();
+        if (loginRes.ok && contentType.includes('application/json')) {
+          const loginData = await loginRes.json();
+          if (loginData?.ok && loginData.user) {
+            const srvUser = loginData.user;
+            saveLocalUser({
+              email: cleanEmail,
+              fullName: srvUser.fullName || cleanEmail.split('@')[0],
+              password,
+              confirmed: true,
+              createdAt: srvUser.createdAt || new Date().toISOString().split('T')[0],
+            });
+            if (srvUser.hasFullAccess && onPaymentVerified) {
+              onPaymentVerified();
+            }
+            onAuthenticated({
+              id: srvUser.id || `student-${cleanEmail}`,
+              email: cleanEmail,
+              fullName: srvUser.fullName || cleanEmail.split('@')[0],
+              role:
+                srvUser.role === 'admin'
+                  ? 'admin'
+                  : srvUser.hasFullAccess
+                  ? 'student_paid'
+                  : 'student_demo',
+              createdAt: srvUser.createdAt || new Date().toISOString().split('T')[0],
+              isDemoSession: false,
+            });
+            onClose();
+            return;
+          }
+        }
+      } catch {
+        // Fallback to local user check below if server is unreachable
+      }
+
+      // 3. Local browser account fallback (supports Netlify static mode & in-app password resets)
+      if (matchedLocal) {
+        if (matchedLocal.password !== password) {
+          setErrorMsg('Incorrect password. Click "Forgot password?" if you need to reset it.');
+          setIsSubmitting(false);
+          return;
+        }
+        const resolvedName =
+          matchedLocal.fullName || fullName.trim() || cleanEmail.split('@')[0];
+        const accessRes = await checkStudentEmailFullAccess(cleanEmail, resolvedName);
+        if (accessRes.ok && accessRes.hasFullAccess && onPaymentVerified) {
+          onPaymentVerified();
+        }
+        onAuthenticated({
+          id: accessRes.hasFullAccess ? `enrolled-${cleanEmail}` : `student-${cleanEmail}`,
+          email: cleanEmail,
+          fullName: resolvedName,
+          role: accessRes.hasFullAccess ? 'student_paid' : 'student_demo',
+          createdAt: matchedLocal.createdAt || new Date().toISOString().split('T')[0],
+          isDemoSession: false,
+        });
+        onClose();
         return;
       }
 
-      if (data.user) {
-        const profile = await fetchOrCreateUserProfile(
-          data.user.id,
-          data.user.email || cleanEmail
-        );
-        if (profile) {
-          onAuthenticated(profile);
-          onClose();
+      // 4. If running on static Netlify without Supabase env vars configured at build time,
+      // allow the student to sign in and persist their credentials locally
+      if (!supabaseReady || !supabase) {
+        const resolvedName = fullName.trim() || cleanEmail.split('@')[0];
+        saveLocalUser({
+          email: cleanEmail,
+          fullName: resolvedName,
+          password,
+          confirmed: true,
+          createdAt: new Date().toISOString().split('T')[0],
+        });
+        const accessRes = await checkStudentEmailFullAccess(cleanEmail, resolvedName);
+        if (accessRes.ok && accessRes.hasFullAccess && onPaymentVerified) {
+          onPaymentVerified();
         }
+        onAuthenticated({
+          id: accessRes.hasFullAccess ? `enrolled-${cleanEmail}` : `student-${cleanEmail}`,
+          email: cleanEmail,
+          fullName: resolvedName,
+          role: accessRes.hasFullAccess ? 'student_paid' : 'student_demo',
+          createdAt: new Date().toISOString().split('T')[0],
+          isDemoSession: false,
+        });
+        onClose();
+        return;
       }
+
+      setErrorMsg(
+        'Invalid email or password. Every student must Sign Up first to get their login details, or click "Forgot password?" below to reset your password.'
+      );
     } catch (err: any) {
       setErrorMsg(err.message || 'Unable to sign in. Please try again.');
     } finally {
