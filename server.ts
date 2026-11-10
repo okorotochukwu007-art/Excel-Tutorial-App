@@ -548,6 +548,38 @@ async function startServer() {
     }
   });
 
+  // 3B-2. Video MP4 Direct Download Gateway for Mobile Phones
+  app.get('/api/video/download', (req: Request, res: Response) => {
+    const videoId = String(req.query.videoId || '').trim();
+    const service = String(req.query.service || 'savefrom').trim();
+    if (!videoId) {
+      return res.status(400).json({ ok: false, error: 'videoId query parameter is required.' });
+    }
+    const safeVideoId = encodeURIComponent(videoId);
+    let targetUrl = `https://www.ssyoutube.com/watch?v=${safeVideoId}`;
+    if (service === '10downloader') {
+      targetUrl = `https://10downloader.com/download?v=https://www.youtube.com/watch?v=${safeVideoId}`;
+    } else if (service === 'y2mate') {
+      targetUrl = `https://www.y2mate.com/youtube/${safeVideoId}`;
+    }
+
+    if (req.query.redirect === 'true') {
+      return res.redirect(targetUrl);
+    }
+
+    return res.json({
+      ok: true,
+      videoId: safeVideoId,
+      format: 'mp4',
+      downloadUrls: {
+        directSaveFrom: `https://www.ssyoutube.com/watch?v=${safeVideoId}`,
+        tenDownloader: `https://10downloader.com/download?v=https://www.youtube.com/watch?v=${safeVideoId}`,
+        y2mate: `https://www.y2mate.com/youtube/${safeVideoId}`,
+      },
+      youtubeUrl: `https://www.youtube.com/watch?v=${safeVideoId}`,
+    });
+  });
+
   // 3C. Student Lesson Approved Video Recommendations (Cached + On-Demand Discovery Fallback)
   app.get(
     '/api/lessons/:lessonId/recommendations',

@@ -2700,14 +2700,26 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                       <span className="font-mono text-emerald-400 font-semibold">
                         Admin Video Preview · Video ID: {previewingVideoId}
                       </span>
-                      <button
-                        type="button"
-                        onClick={() => setPreviewingVideoId(null)}
-                        className="p-1 text-slate-400 hover:text-white rounded cursor-pointer flex items-center gap-1"
-                      >
-                        <X className="w-4 h-4" />
-                        <span>Close Preview</span>
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <a
+                          href={`https://www.ssyoutube.com/watch?v=${encodeURIComponent(previewingVideoId)}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                          title="Download this candidate video as MP4 to phone or PC"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          <span>Download MP4</span>
+                        </a>
+                        <button
+                          type="button"
+                          onClick={() => setPreviewingVideoId(null)}
+                          className="p-1 text-slate-400 hover:text-white rounded cursor-pointer flex items-center gap-1"
+                        >
+                          <X className="w-4 h-4" />
+                          <span>Close Preview</span>
+                        </button>
+                      </div>
                     </div>
                     <div className="aspect-video w-full max-h-[380px] bg-black">
                       <iframe

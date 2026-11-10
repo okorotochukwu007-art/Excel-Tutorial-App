@@ -13,6 +13,8 @@ import {
   Video,
   MessageCircle,
   Lock,
+  Download,
+  Smartphone,
 } from 'lucide-react';
 import {
   CurriculumLevel,
@@ -28,6 +30,10 @@ import {
   getBundledOrLocalLessonRecommendations,
   SupabaseBackendStatus,
 } from '../services/academyService';
+import {
+  VideoDownloadModal,
+  VideoDownloadTarget,
+} from './VideoDownloadModal';
 
 interface LessonPlayerViewProps {
   levels: CurriculumLevel[];
@@ -143,6 +149,12 @@ export const LessonPlayerView: React.FC<LessonPlayerViewProps> = ({
   const prevLesson = currentIdx > 0 ? allLessons[currentIdx - 1].lesson : null;
   const nextLesson =
     currentIdx < allLessons.length - 1 ? allLessons[currentIdx + 1].lesson : null;
+
+  useEffect(() => {
+    if (currentLesson && currentLesson.levelNumber) {
+      setSidebarLevelNumber(currentLesson.levelNumber);
+    }
+  }, [currentLesson?.id, currentLesson?.levelNumber]);
 
   const bundledApprovedForCurrent = getBundledOrLocalLessonRecommendations(
     currentLesson.id
@@ -351,6 +363,32 @@ export const LessonPlayerView: React.FC<LessonPlayerViewProps> = ({
     setIsPlayerOpen(true);
   };
 
+  const [downloadTarget, setDownloadTarget] = useState<VideoDownloadTarget | null>(null);
+  const [isDownloadModalOpen, setIsDownloadModalOpen] = useState<boolean>(false);
+
+  const handleOpenDownload = (customTarget?: Partial<VideoDownloadTarget>) => {
+    const vidId = customTarget?.videoId || activeRec?.videoId || activeYoutubeEmbedId || '';
+    if (!vidId) return;
+    setDownloadTarget({
+      videoId: vidId,
+      title: customTarget?.title || activeRec?.title || currentLesson.title,
+      channelTitle:
+        customTarget?.channelTitle ||
+        activeRec?.channelTitle ||
+        'Microsoft Excel Academy',
+      durationFormatted:
+        customTarget?.durationFormatted ||
+        activeRec?.durationFormatted ||
+        `${currentLesson.durationMinutes} min`,
+      thumbnailUrl:
+        customTarget?.thumbnailUrl ||
+        activeRec?.thumbnailUrl ||
+        `https://i.ytimg.com/vi/${vidId}/hqdefault.jpg`,
+      lessonTitle: currentLesson.title,
+    });
+    setIsDownloadModalOpen(true);
+  };
+
   return (
     <div className="max-w-7xl mx-auto px-6 py-8">
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
@@ -367,12 +405,22 @@ export const LessonPlayerView: React.FC<LessonPlayerViewProps> = ({
                 <button
                   key={lvl.levelNumber}
                   type="button"
-                  onClick={() => setSidebarLevelNumber(lvl.levelNumber)}
+                  onClick={() => {
+                    setSidebarLevelNumber(lvl.levelNumber);
+                    const lvlLessons = lvl.modules.flatMap((m) => m.lessons);
+                    const targetLesson =
+                      lvlLessons.find((l) => !completedLessonIds.includes(l.id)) ||
+                      lvlLessons[0];
+                    if (targetLesson && targetLesson.id !== currentLesson.id) {
+                      onSelectLesson(targetLesson.id);
+                    }
+                  }}
                   className={`py-1.5 text-xs font-mono font-semibold rounded transition-colors cursor-pointer ${
                     sidebarLevelNumber === lvl.levelNumber
-                      ? 'bg-emerald-600 text-white'
-                      : 'text-slate-300 hover:text-white'
+                      ? 'bg-emerald-600 text-white shadow-xs'
+                      : 'text-slate-300 hover:text-white hover:bg-slate-700/60'
                   }`}
+                  title={`Switch and move to Level ${lvl.levelNumber}`}
                 >
                   L{lvl.levelNumber}
                 </button>
@@ -398,21 +446,13 @@ export const LessonPlayerView: React.FC<LessonPlayerViewProps> = ({
                     .map((les) => {
                       const isActive = les.id === currentLesson.id;
                       const isDone = hasPassedLessonQuizById(les.id, les.levelNumber);
-                      const lesIdxInAll = allLessons.findIndex((item) => item.lesson.id === les.id);
-                      const isLevelLocked =
-                        les.levelNumber > 1 &&
-                        !isInstructorUser &&
-                        localStorage.getItem('excel_academy_has_paid') !== 'true';
-                      const isPrevLevelQuizLocked =
-                        les.levelNumber > 1 &&
-                        !isInstructorUser &&
-                        !getPassedLevelExamAttempt(les.levelNumber - 1);
-                      const prevLesObj = lesIdxInAll > 0 ? allLessons[lesIdxInAll - 1]?.lesson : null;
-                      const isSeqLocked =
-                        !isInstructorUser &&
-                        Boolean(prevLesObj) &&
-                        !hasPassedLessonQuizById(prevLesObj!.id, prevLesObj!.levelNumber);
-                      const isLocked = isLevelLocked || isPrevLevelQuizLocked || isSeqLocked;
+                      const isPaidOrAuthed =
+                        isInstructorUser ||
+                        Boolean(currentUser && !currentUser.isDemoSession) ||
+                        (typeof window !== 'undefined' &&
+                          localStorage.getItem('excel_academy_has_paid') === 'true');
+                      const isLevelLocked = les.levelNumber > 1 && !isPaidOrAuthed;
+                      const isLocked = isLevelLocked;
 
                       return (
                         <button
@@ -533,7 +573,7 @@ export const LessonPlayerView: React.FC<LessonPlayerViewProps> = ({
         {/* RIGHT / MAIN LESSON PLAYER COLUMN (8 cols) */}
         <div className="lg:col-span-8 space-y-6 order-1 lg:order-2">
           {/* Breadcrumb & Progress Header */}
-          <div className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="bg-white border border-slate-200 rounded-xl p-5">
             <div className="space-y-1">
               <div className="flex flex-wrap items-center gap-2 text-xs text-emerald-800 font-semibold">
                 <span>
@@ -554,48 +594,6 @@ export const LessonPlayerView: React.FC<LessonPlayerViewProps> = ({
               <div className="text-xs text-slate-500">
                 Module: {currentEntry.moduleTitle}
               </div>
-            </div>
-
-            <div className="flex items-center gap-2.5 shrink-0">
-              <a
-                href="https://wa.me/2347080145682?text=Hello%20Lead%20Instructor%20Okoro,%20I%20am%20working%20on%20a%20lesson%20in%20the%20Excel%20Academy%20and%20have%20a%20question."
-                target="_blank"
-                rel="noopener noreferrer"
-                className="px-3.5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
-                title="Speak directly to Lead Instructor Okoro Tochuwku on WhatsApp (07080145682)"
-              >
-                <MessageCircle className="w-3.5 h-3.5 fill-current text-white shrink-0" />
-                <span className="hidden sm:inline">Speak to the Instructor</span>
-                <span className="sm:hidden">WhatsApp</span>
-              </a>
-
-              <button
-                type="button"
-                onClick={() => {
-                  if (isInstructorUser || isCompleted) {
-                    onToggleCompleteLesson(currentLesson.id);
-                  } else {
-                    scrollToModuleQuizWithPrompt();
-                  }
-                }}
-                className={`px-4 py-2.5 rounded-lg text-xs font-semibold flex items-center gap-2 whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
-                  isCompleted
-                    ? 'bg-emerald-800 text-white hover:bg-emerald-900'
-                    : 'bg-slate-900 text-white hover:bg-emerald-800'
-                }`}
-              >
-                {isCompleted ? (
-                  <>
-                    <Check className="w-4 h-4" />
-                    <span>Quiz Passed · Completed</span>
-                  </>
-                ) : (
-                  <>
-                    <HelpCircle className="w-4 h-4 text-emerald-400" />
-                    <span>Pass Quiz to Complete</span>
-                  </>
-                )}
-              </button>
             </div>
           </div>
 
@@ -639,19 +637,34 @@ export const LessonPlayerView: React.FC<LessonPlayerViewProps> = ({
                 </div>
               </div>
 
-              {effectiveApprovedRecs.length > 1 && (
+              <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
                 <button
                   type="button"
-                  onClick={handleCycleAlternativeTutorial}
-                  className="px-3 py-1.5 bg-slate-800 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg border border-slate-700 flex items-center gap-1.5 transition-colors cursor-pointer self-start sm:self-auto"
+                  onClick={() => handleOpenDownload()}
+                  className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+                  title="Download this video directly to your phone or computer as MP4"
                 >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  <span>
-                    View Another Recommended Tutorial ({selectedRecIndex + 1}/
-                    {effectiveApprovedRecs.length})
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Download MP4</span>
+                  <span className="hidden sm:inline px-1.5 py-0.2 rounded bg-emerald-700 text-[10px] uppercase font-mono">
+                    Phone Ready
                   </span>
                 </button>
-              )}
+
+                {effectiveApprovedRecs.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={handleCycleAlternativeTutorial}
+                    className="px-3 py-1.5 bg-slate-800 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg border border-slate-700 flex items-center gap-1.5 transition-colors cursor-pointer"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>
+                      Alternative ({selectedRecIndex + 1}/
+                      {effectiveApprovedRecs.length})
+                    </span>
+                  </button>
+                )}
+              </div>
             </div>
 
             {loadingRecs ? (
@@ -669,31 +682,79 @@ export const LessonPlayerView: React.FC<LessonPlayerViewProps> = ({
                 {/* Embedded YouTube Player or Thumbnail Preview */}
                 <div className="bg-slate-950">
                   {isPlayerOpen ? (
-                    <div className="aspect-video w-full bg-black">
-                      <iframe
-                        className="w-full h-full"
-                        src={`https://www.youtube-nocookie.com/embed/${activeRec.videoId}?rel=0`}
-                        title={activeRec.title}
-                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                        allowFullScreen
-                      />
+                    <div>
+                      <div className="aspect-video w-full bg-black">
+                        <iframe
+                          className="w-full h-full"
+                          src={`https://www.youtube-nocookie.com/embed/${activeRec.videoId}?rel=0`}
+                          title={activeRec.title}
+                          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                          allowFullScreen
+                        />
+                      </div>
+                      {/* Direct Mobile Download Bar */}
+                      <div className="bg-slate-900 border-t border-slate-800 px-4 py-2.5 flex flex-col sm:flex-row items-center justify-between gap-2.5 text-xs text-slate-300">
+                        <div className="flex items-center gap-2">
+                          <Smartphone className="w-4 h-4 text-emerald-400 shrink-0" />
+                          <span>
+                            Want to watch offline? Save this video directly to your phone as <strong className="text-white">.MP4</strong>
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleOpenDownload()}
+                          className="w-full sm:w-auto px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg shadow-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer shrink-0"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          <span>Download Video (.MP4)</span>
+                        </button>
+                      </div>
                     </div>
                   ) : (
-                    <div className="aspect-video w-full relative bg-slate-900 flex items-center justify-center overflow-hidden">
-                      <img
-                        src={activeRec.thumbnailUrl}
-                        alt={activeRec.title}
-                        referrerPolicy="no-referrer"
-                        className="w-full h-full object-cover opacity-65"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setIsPlayerOpen(true)}
-                        className="relative z-10 px-5 py-3 bg-emerald-700 hover:bg-emerald-600 text-white font-semibold text-xs sm:text-sm rounded-xl shadow-lg flex items-center gap-2.5 cursor-pointer transition-transform hover:scale-105"
-                      >
-                        <Play className="w-4 h-4 fill-current" />
-                        <span>Watch Tutorial Inside Academy</span>
-                      </button>
+                    <div>
+                      <div className="aspect-video w-full relative bg-slate-900 flex items-center justify-center overflow-hidden">
+                        <img
+                          src={activeRec.thumbnailUrl}
+                          alt={activeRec.title}
+                          referrerPolicy="no-referrer"
+                          className="w-full h-full object-cover opacity-65"
+                        />
+                        <div className="relative z-10 flex flex-wrap items-center justify-center gap-3 p-4">
+                          <button
+                            type="button"
+                            onClick={() => setIsPlayerOpen(true)}
+                            className="px-5 py-3 bg-emerald-700 hover:bg-emerald-600 text-white font-semibold text-xs sm:text-sm rounded-xl shadow-lg flex items-center gap-2.5 cursor-pointer transition-transform hover:scale-105"
+                          >
+                            <Play className="w-4 h-4 fill-current" />
+                            <span>Watch Tutorial Inside Academy</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleOpenDownload()}
+                            className="px-4 py-3 bg-slate-900/90 hover:bg-slate-900 text-white font-semibold text-xs sm:text-sm rounded-xl shadow-lg border border-slate-700 flex items-center gap-2 cursor-pointer transition-transform hover:scale-105"
+                          >
+                            <Download className="w-4 h-4 text-emerald-400" />
+                            <span>Download MP4 to Phone</span>
+                          </button>
+                        </div>
+                      </div>
+                      {/* Direct Mobile Download Bar */}
+                      <div className="bg-slate-900 border-t border-slate-800 px-4 py-2.5 flex flex-col sm:flex-row items-center justify-between gap-2.5 text-xs text-slate-300">
+                        <div className="flex items-center gap-2">
+                          <Smartphone className="w-4 h-4 text-emerald-400 shrink-0" />
+                          <span>
+                            Save this video directly to your phone as <strong className="text-white">.MP4</strong> to watch offline without data charges.
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleOpenDownload()}
+                          className="w-full sm:w-auto px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg shadow-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer shrink-0"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          <span>Download Video (.MP4)</span>
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -750,8 +811,18 @@ export const LessonPlayerView: React.FC<LessonPlayerViewProps> = ({
                     <div className="flex flex-wrap items-center gap-2 shrink-0">
                       <button
                         type="button"
+                        onClick={() => handleOpenDownload()}
+                        className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                        title="Download this video directly to your phone or computer as MP4"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        <span>Download MP4 to Phone</span>
+                      </button>
+
+                      <button
+                        type="button"
                         onClick={() => setIsPlayerOpen(true)}
-                        className="px-3.5 py-2 bg-emerald-800 text-white text-xs font-semibold rounded-lg hover:bg-emerald-900 transition-colors flex items-center gap-1.5 cursor-pointer"
+                        className="px-3.5 py-2 bg-slate-900 text-white text-xs font-semibold rounded-lg hover:bg-slate-800 transition-colors flex items-center gap-1.5 cursor-pointer"
                       >
                         <Play className="w-3.5 h-3.5" />
                         <span>
@@ -847,6 +918,28 @@ export const LessonPlayerView: React.FC<LessonPlayerViewProps> = ({
                     allowFullScreen
                   />
                 </div>
+                {/* Direct Mobile Download Bar */}
+                <div className="bg-slate-900 border-t border-slate-800 px-4 py-2.5 flex flex-col sm:flex-row items-center justify-between gap-2.5 text-xs text-slate-300">
+                  <div className="flex items-center gap-2">
+                    <Smartphone className="w-4 h-4 text-emerald-400 shrink-0" />
+                    <span>
+                      Save this video directly to your phone as <strong className="text-white">.MP4</strong> to watch offline without using mobile data.
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      handleOpenDownload({
+                        videoId: activeYoutubeEmbedId,
+                        title: currentLesson.title,
+                      })
+                    }
+                    className="w-full sm:w-auto px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg shadow-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer shrink-0"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Download Video (.MP4)</span>
+                  </button>
+                </div>
                 <div className="p-5 flex flex-wrap items-center justify-between gap-3 text-xs">
                   <div>
                     <div className="font-bold text-slate-900">
@@ -856,10 +949,26 @@ export const LessonPlayerView: React.FC<LessonPlayerViewProps> = ({
                       Instructor-assigned lesson video ({currentLesson.durationMinutes} min)
                     </div>
                   </div>
-                  <span className="px-3.5 py-2 bg-emerald-800 text-white font-semibold rounded-lg flex items-center gap-1.5">
-                    <Play className="w-3.5 h-3.5" />
-                    <span>Playing Above</span>
-                  </span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleOpenDownload({
+                          videoId: activeYoutubeEmbedId,
+                          title: currentLesson.title,
+                        })
+                      }
+                      className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+                      title="Download this video directly to your phone as MP4"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>Download MP4 to Phone</span>
+                    </button>
+                    <span className="px-3.5 py-2 bg-emerald-800 text-white font-semibold rounded-lg flex items-center gap-1.5">
+                      <Play className="w-3.5 h-3.5" />
+                      <span>Playing Above</span>
+                    </span>
+                  </div>
                 </div>
               </div>
             ) : studentRecState === 'technical_error' ? (
@@ -1429,49 +1538,34 @@ export const LessonPlayerView: React.FC<LessonPlayerViewProps> = ({
               Lesson {currentIdx + 1} of {allLessons.length}
             </div>
 
-            {!isCompleted && !isInstructorUser ? (
-              <button
-                type="button"
-                onClick={scrollToModuleQuizWithPrompt}
-                className="px-4 py-2 rounded-lg text-xs font-bold bg-slate-200 hover:bg-slate-300 text-slate-700 border border-slate-300 flex items-center gap-2 cursor-pointer transition-colors"
-              >
-                <Lock className="w-3.5 h-3.5 text-amber-700" />
-                <span>Pass Module Quiz to Unlock Next Lesson</span>
-              </button>
-            ) : nextLesson &&
-              nextLesson.levelNumber > currentLesson.levelNumber &&
-              !currentLevelExamPassedAttempt &&
-              !isInstructorUser &&
-              onOpenLevelExam ? (
-              <button
-                type="button"
-                onClick={() => onOpenLevelExam(currentLesson.levelNumber)}
-                className="px-4 py-2 rounded-lg text-xs font-bold bg-emerald-700 hover:bg-emerald-600 text-white flex items-center gap-2 transition-colors cursor-pointer shadow-xs"
-              >
-                <span>
-                  Take Level {currentLesson.levelNumber} Final Exam to Unlock
-                  Level {nextLesson.levelNumber}
-                </span>
-                <ChevronRight className="w-4 h-4" />
-              </button>
-            ) : (
-              <button
-                type="button"
-                disabled={!nextLesson}
-                onClick={() => nextLesson && onSelectLesson(nextLesson.id)}
-                className={`px-4 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 transition-colors ${
-                  nextLesson
-                    ? 'bg-slate-900 text-white hover:bg-emerald-800 cursor-pointer'
-                    : 'bg-slate-50 text-slate-400 cursor-not-allowed'
-                }`}
-              >
-                Next Lesson
-                <ChevronRight className="w-4 h-4" />
-              </button>
-            )}
+            <button
+              type="button"
+              disabled={!nextLesson}
+              onClick={() => nextLesson && onSelectLesson(nextLesson.id)}
+              className={`px-4 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 transition-colors ${
+                nextLesson
+                  ? 'bg-slate-900 text-white hover:bg-emerald-800 cursor-pointer shadow-xs'
+                  : 'bg-slate-100 text-slate-400 cursor-not-allowed'
+              }`}
+              title={nextLesson ? `Proceed to: ${nextLesson.title}` : 'End of course curriculum'}
+            >
+              <span>
+                {nextLesson && nextLesson.levelNumber > currentLesson.levelNumber
+                  ? `Next Lesson (Level 0${nextLesson.levelNumber})`
+                  : 'Next Lesson'}
+              </span>
+              <ChevronRight className="w-4 h-4" />
+            </button>
           </div>
         </div>
       </div>
+
+      {/* Video MP4 Download Modal for Mobile & Offline Learning */}
+      <VideoDownloadModal
+        isOpen={isDownloadModalOpen}
+        onClose={() => setIsDownloadModalOpen(false)}
+        video={downloadTarget}
+      />
     </div>
   );
 };

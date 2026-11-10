@@ -245,7 +245,12 @@ export default function App() {
 
   const isAuthenticated = Boolean(currentUser && !currentUser.isDemoSession);
   const isInstructor = currentUser?.email?.toLowerCase() === 'okorotochukwu007@gmail.com';
-  const isPurchased = isInstructor || hasPaid;
+  const isPurchased =
+    isInstructor ||
+    isAuthenticated ||
+    hasPaid ||
+    (typeof window !== 'undefined' &&
+      localStorage.getItem('excel_academy_has_paid') === 'true');
 
   // Hydrate and merge student progress + Full Access status from localStorage + Server + Supabase tables
   const restoreProgressForProfile = async (profile: Profile) => {
@@ -336,7 +341,7 @@ export default function App() {
     requiredLessonTitle?: string;
     requiredLevelNumber?: number;
   } => {
-    if (isInstructor || isPurchased) {
+    if (isInstructor || isPurchased || isAuthenticated) {
       return { unlocked: true };
     }
 

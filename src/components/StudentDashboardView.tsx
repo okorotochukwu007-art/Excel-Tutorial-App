@@ -405,26 +405,19 @@ export const StudentDashboardView: React.FC<StudentDashboardViewProps> = ({
                   lvlTotalCount > 0 && lvlCompletedCount >= lvlTotalCount;
                 const examStatus = getLevelExamStatus(lvl.levelNumber);
 
-                // Check if previous levels (1 .. lvl.levelNumber - 1) are completed and their exams passed
-                const prevLevelsUnlocked =
-                  areAllPreviousLevelsCompletedAndPassed(lvl.levelNumber);
+                // All levels and lessons unlocked for full access
+                const prevLevelsUnlocked = true;
 
-                // The Level Final Exam is ONLY unlocked when:
-                // 1) All previous levels & their exams are passed, AND
-                // 2) All modules/lessons in THIS level are 100% completed (or exam was already passed / instructor)
+                // The Level Final Exam is ready when student passes all lessons in this level (or instructor)
                 const isLevelExamUnlocked =
                   isInstructor ||
                   examStatus.passed ||
-                  (prevLevelsUnlocked && allLevelLessonsDone);
+                  allLevelLessonsDone;
 
                 return (
                   <div
                     key={lvl.levelNumber}
-                    className={`bg-white border rounded-2xl shadow-xs overflow-hidden ${
-                      !prevLevelsUnlocked
-                        ? 'border-slate-200 opacity-90'
-                        : 'border-slate-200'
-                    }`}
+                    className="bg-white border border-slate-200 rounded-2xl shadow-xs overflow-hidden"
                   >
                     {/* Level Header */}
                     <div className="p-5 bg-slate-50 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -436,19 +429,36 @@ export const StudentDashboardView: React.FC<StudentDashboardViewProps> = ({
                           <h3 className="text-base sm:text-lg font-bold text-slate-900">
                             {lvl.title}
                           </h3>
-                          {!prevLevelsUnlocked && (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-300 text-[11px] font-mono font-bold">
-                              <Lock className="w-3 h-3" />
-                              Pass Level {lvl.levelNumber - 1} Exam to Unlock
-                            </span>
-                          )}
                         </div>
                         <p className="text-xs text-slate-500">
                           {lvl.shortDescription}
                         </p>
                       </div>
 
-                      <div className="flex items-center gap-3 shrink-0">
+                      <div className="flex flex-wrap items-center gap-3 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const lvlLessons = lvl.modules.flatMap((m) => m.lessons);
+                            const targetLesson =
+                              lvlLessons.find((l) => !completedLessonIds.includes(l.id)) ||
+                              lvlLessons[0];
+                            if (targetLesson) {
+                              onStartLesson(targetLesson.id);
+                            }
+                          }}
+                          className="px-3.5 py-2 bg-emerald-700 hover:bg-emerald-600 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+                        >
+                          <Play className="w-3.5 h-3.5 fill-current" />
+                          <span>
+                            {lvlCompletedCount > 0 && lvlCompletedCount < lvlTotalCount
+                              ? `Resume Level ${lvl.levelNumber}`
+                              : lvlCompletedCount >= lvlTotalCount
+                              ? `Review Level ${lvl.levelNumber}`
+                              : `Start Level ${lvl.levelNumber}`}
+                          </span>
+                        </button>
+
                         <div className="text-right">
                           <div className="text-xs font-mono font-bold text-slate-800">
                             {lvlCompletedCount} / {lvlTotalCount} Lessons (
@@ -459,7 +469,7 @@ export const StudentDashboardView: React.FC<StudentDashboardViewProps> = ({
                               ? `Level Exam Passed (${examStatus.bestScore}%)`
                               : isLevelExamUnlocked
                               ? 'Level Exam Unlocked'
-                              : 'Level Exam Locked'}
+                              : 'Level Exam Ready When Modules Complete'}
                           </div>
                         </div>
                       </div>
@@ -478,18 +488,6 @@ export const StudentDashboardView: React.FC<StudentDashboardViewProps> = ({
                               const isDone = completedLessonIds.includes(
                                 les.id
                               );
-                              const globalIdx = allLessons.findIndex(
-                                (item) => item.id === les.id
-                              );
-                              const isSeqLocked =
-                                !isInstructor &&
-                                globalIdx > 0 &&
-                                !completedLessonIds.includes(
-                                  allLessons[globalIdx - 1].id
-                                );
-                              const isLessonLocked =
-                                !isDone &&
-                                (!prevLevelsUnlocked || isSeqLocked);
 
                               return (
                                 <button
@@ -499,16 +497,12 @@ export const StudentDashboardView: React.FC<StudentDashboardViewProps> = ({
                                   className={`p-3 rounded-xl border text-left transition-all flex items-center justify-between gap-3 cursor-pointer ${
                                     isDone
                                       ? 'bg-emerald-50/40 border-emerald-200 hover:bg-emerald-50'
-                                      : isLessonLocked
-                                      ? 'bg-slate-50/80 border-slate-200 text-slate-500 hover:bg-slate-100'
                                       : 'bg-white border-slate-200 hover:border-emerald-300 hover:bg-slate-50'
                                   }`}
                                 >
                                   <div className="flex items-center gap-2.5 min-w-0">
                                     {isDone ? (
                                       <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
-                                    ) : isLessonLocked ? (
-                                      <Lock className="w-4 h-4 text-amber-700 shrink-0" />
                                     ) : (
                                       <Play className="w-4 h-4 text-emerald-700 shrink-0" />
                                     )}
@@ -524,12 +518,8 @@ export const StudentDashboardView: React.FC<StudentDashboardViewProps> = ({
                                         <span>·</span>
                                         <span>
                                           {isDone
-                                            ? 'Completed ✓'
-                                            : !prevLevelsUnlocked
-                                            ? `Pass Level ${lvl.levelNumber - 1} Exam First`
-                                            : isSeqLocked
-                                            ? 'Complete Previous Lesson First'
-                                            : 'Start Lesson'}
+                                            ? 'Completed ✓ · Watch Again'
+                                            : 'Start Lesson & Quiz'}
                                         </span>
                                       </div>
                                     </div>
